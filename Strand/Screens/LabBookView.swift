@@ -788,7 +788,8 @@ private struct MarkerDetailView: View {
                 // A small liquid vessel posed at the association STRENGTH (|r|, a neutral 0–1 statistical
                 // magnitude — never a clinical value), tinted by the relationship's own colour. Matches
                 // Compare's pair card. Decorative — the r read-out + sentence carry the meaning.
-                LiquidVessel(value: min(abs(c.r), 1), tint: tint, animated: false)
+                HearthProgressRing(fraction: min(abs(c.r), 1), lineWidth: 3,
+                                   trackColor: tint.opacity(0.18), fillColor: tint, animated: false)
                     .frame(width: 30, height: 30)
                     .accessibilityHidden(true)
                 Text("\(displayName) ↔ \(signal?.title ?? "")")

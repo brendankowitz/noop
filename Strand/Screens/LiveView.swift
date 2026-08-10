@@ -782,8 +782,11 @@ private struct LiveHeartReadout: View {
                 .tracking(StrandFont.overlineTracking)
                 .foregroundStyle(StrandPalette.textSecondary)
             ZStack {
-                // The live BPM gauge: a liquid vessel that fills to the HR-zone fraction and sloshes.
-                LiquidVessel(value: hrFrac, tint: tint, animated: displayHR != nil)
+                // The live BPM gauge as a flat Hearth ring filled to the HR-zone fraction. animated: false
+                // so the ring tracks the live HR value directly (no per-update 0.9s ease-out lag); the big
+                // numeral owns its own count-up. Matches the mockup's flat rings.
+                HearthProgressRing(fraction: hrFrac, lineWidth: 6,
+                                   trackColor: tint.opacity(0.18), fillColor: tint, animated: false)
                     .frame(width: 210, height: 210)
                 VStack(spacing: 0) {
                     // The big focal HR numeral counts up to the live value (the hero number); a crisp
@@ -850,8 +853,10 @@ private struct LivePhysiology: View {
     /// Oura ring actively streaming live HR — trusted stream without a WHOOP bond (see LiveView.ringStreaming).
     private var ringStreaming: Bool { live.connected && live.streamingLiveHR }
 
-    /// The liquid heart pink (matches LiquidThread's default + the mockup #ff6b81).
-    private let liquidHeart = Color(.sRGB, red: 1, green: 107 / 255, blue: 129 / 255, opacity: 1)
+    /// The live-HR heart tint — the palette's terracotta rose (was a hardcoded #ff6b81 neon pink,
+    /// same repoint as LiquidTodayView's `liquidHeart`). Currently unreferenced (the R-R thread
+    /// draws in `metricCyan`), kept as the named tint for any future heart accent.
+    private let liquidHeart = StrandPalette.metricRose
 
     var body: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.space4) {
@@ -1218,8 +1223,9 @@ private struct SignalTrustTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                // The signal's liquid gauge — a static-posed small vessel (no per-frame cost).
-                LiquidVessel(value: tile.frac, tint: tile.tint, animated: false)
+                // The signal's flat Hearth ring — static (no per-frame cost).
+                HearthProgressRing(fraction: tile.frac, lineWidth: 3,
+                                   trackColor: tile.tint.opacity(0.18), fillColor: tile.tint, animated: false)
                     .frame(width: 22, height: 22)
                     .accessibilityHidden(true)
                 Text(tile.title.uppercased())

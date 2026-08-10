@@ -588,18 +588,19 @@ private struct StressHeroGauge: View {
 
     var body: some View {
         ZStack {
-            LiquidVessel(value: frac, tint: tint, animated: true)
+            HearthProgressRing(fraction: frac, lineWidth: 5,
+                               trackColor: tint.opacity(0.18), fillColor: tint, animated: true)
                 .frame(width: 104, height: 104)
             VStack(spacing: 0) {
                 // CountUpText self-animates (counts up from 0 on appear, re-rolls on value change),
-                // so the score is passed straight through — no external roll state needed.
+                // so the score is passed straight through — no external roll state needed. The flat ring
+                // has no dark backing disc, so the numeral reads in textPrimary on the cream card.
                 CountUpText(
                     value: score,
                     format: { String(format: "%.1f", $0) },
-                    font: StrandFont.rounded(34, weight: .bold),
-                    color: .white
+                    font: StrandFont.rounded(34, weight: .light),
+                    color: StrandPalette.textPrimary
                 )
-                .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
                 Text("of 3")
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textSecondary)

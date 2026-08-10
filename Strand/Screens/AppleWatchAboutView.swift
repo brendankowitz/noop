@@ -14,11 +14,18 @@ import StrandDesign
 // SAME on macOS and iOS. The actual permission request lives in the setup flow
 // (AppleWatchSetupView), which this page links to. Reachable from Settings → About.
 //
+// Hearth layout (mockup 1c, right frame): reference material, not a lived moment — so it drops the
+// sky for FLAT INK and reads as three things only: one Group card carrying the whole capability
+// table, one sage Conclusion card for the single conclusion this page draws (why recovery
+// calibrates), and one Group-style row into the setup flow. The former per-metric standalone cards
+// (intro, blood-oxygen note) are gone as separate cards — nothing they said was dropped, it moved
+// into the row that owns the claim (wrist temperature, blood oxygen) or into the header's own line.
+//
 // Honest tone, plain voice, no fabricated numbers. Every confidence label here is the same
 // honest "Great / Good / Calibrating / Not available" stance the scores use on Today.
 
 /// One row of the capability/confidence table: a metric, where the watch sits on it, and a
-/// plain line of why. The confidence drives the row's accent + pill, so a glance reads honestly.
+/// plain line of why. The confidence drives the row's pill, so a glance reads honestly.
 private struct WatchMetric: Identifiable {
     enum Confidence {
         case great        // use it as-is, the watch is strong here
@@ -43,19 +50,9 @@ private struct WatchMetric: Identifiable {
             case .unavailable:  return .neutral
             }
         }
-
-        var accent: Color {
-            switch self {
-            case .great:        return StrandPalette.statusPositive
-            case .good:         return StrandPalette.accent
-            case .calibrating:  return StrandPalette.statusWarning
-            case .unavailable:  return StrandPalette.textTertiary
-            }
-        }
     }
 
     let id = UUID()
-    let icon: String
     let metric: String
     let confidence: Confidence
     let detail: String
@@ -63,8 +60,9 @@ private struct WatchMetric: Identifiable {
 
 struct AppleWatchAboutView: View {
     /// Optional hook so the page can present the setup/permission flow. The About page links to
-    /// it as its primary call to action; left nil (e.g. on macOS, which has no HealthKit) the
-    /// button is hidden and the page reads as pure reference content.
+    /// it as its primary call to action; left nil (e.g. on macOS, which has no HealthKit, or when
+    /// the setup flow itself opened this page) the row is hidden and the page reads as pure
+    /// reference content.
     var onStartSetup: (() -> Void)?
 
     init(onStartSetup: (() -> Void)? = nil) {
@@ -75,153 +73,106 @@ struct AppleWatchAboutView: View {
     // the watch is strongest at down to what it can't honestly do, so the page reads as a fair
     // appraisal rather than a sales pitch.
     private let metrics: [WatchMetric] = [
-        WatchMetric(icon: "bed.double.fill", metric: String(localized: "Sleep / Rest"),
+        WatchMetric(metric: String(localized: "Sleep / Rest"),
                     confidence: .great,
                     detail: String(localized: "Apple's own sleep stages drive Rest directly. This is one of the watch's strengths.")),
-        WatchMetric(icon: "figure.walk", metric: String(localized: "Steps & workouts"),
+        WatchMetric(metric: String(localized: "Steps & workouts"),
                     confidence: .great,
                     detail: String(localized: "Steps, active energy and logged workouts feed Effort. Dense and reliable.")),
-        WatchMetric(icon: "lungs.fill", metric: String(localized: "Fitness Age"),
+        WatchMetric(metric: String(localized: "Fitness Age"),
                     confidence: .great,
                     detail: String(localized: "Built from Apple's cardio-fitness VO₂ max estimate, the same number the Fitness app shows.")),
-        WatchMetric(icon: "flame.fill", metric: String(localized: "Effort"),
+        WatchMetric(metric: String(localized: "Effort"),
                     confidence: .good,
                     detail: String(localized: "Heart rate plus active energy give a solid daily cardiovascular load. An on-watch workout sharpens it further.")),
-        WatchMetric(icon: "heart.fill", metric: String(localized: "Recovery / Charge"),
+        WatchMetric(metric: String(localized: "Recovery / Charge"),
                     confidence: .calibrating,
                     detail: String(localized: "Led by your heart-rate variability versus your own baseline. The watch samples HRV rather than streaming it, so this needs about a week of nights to calibrate. Until then NOOP shows \u{201C}needs more data\u{201D}, never a guessed number.")),
-        WatchMetric(icon: "thermometer.medium", metric: String(localized: "Skin temperature"),
+        WatchMetric(metric: String(localized: "Skin temperature"),
                     confidence: .good,
                     detail: String(localized: "From the watch's wrist-temperature sensor during sleep, on Series 8 and later. Older models don't have the sensor, so it reads \u{201C}not available\u{201D} rather than zero.")),
-        WatchMetric(icon: "drop.degreesign", metric: String(localized: "Blood oxygen (SpO₂)"),
+        WatchMetric(metric: String(localized: "Blood oxygen (SpO₂)"),
                     confidence: .unavailable,
                     detail: String(localized: "Trend only where supported, and Apple removed the SpO₂ sensor from the newest US units, so on those it simply isn't there. NOOP shows nothing rather than a fake reading.")),
     ]
 
     var body: some View {
         ScreenScaffold(title: "About Apple Watch data",
-                       subtitle: "What your watch is great at, where it's lighter than a chest strap, and how sure NOOP is.",
+                       subtitle: "A watch isn't a chest strap, and NOOP would rather say so than average the difference away.",
                        lazy: true,
-                       // A settings-adjacent reference page, matching Settings — sky.
-                       topBackground: liquidScaffoldSky()) {
-            VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-                introCard
-                capabilityCard
-                hrvCard
-                spo2Card
-                if let onStartSetup {
-                    startCard(onStartSetup)
-                }
-                footerNote
+                       // Reference material, not a moment — flat ink, per the mockup's own
+                       // sky-vs-ink discipline.
+                       topBackground: liquidFlatInkBackground()) {
+            capabilityCard
+            hrvCard
+            if let onStartSetup {
+                setupRow(onStartSetup)
             }
-        }
-    }
-
-    // MARK: - Intro
-
-    private var introCard: some View {
-        NoopCard(tint: StrandPalette.accent) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    Image(systemName: "applewatch")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(StrandPalette.accent)
-                        .frame(width: 34, height: 34)
-                        .background(StrandPalette.accent.opacity(0.14),
-                                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .accessibilityHidden(true)
-                    Text("Your Apple Watch as a device")
-                        .font(StrandFont.headline)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                    Spacer(minLength: 0)
-                }
-                Text("NOOP can run off only an Apple Watch, no chest strap needed. The watch is the sensor; NOOP does the thinking on your phone, computing Charge, Rest, Effort and your Fitness Age from your Health data, all on-device.")
-                    .font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("The honest catch: a watch isn't a chest strap. It's brilliant at sleep, steps, workouts and fitness, and lighter on the dense heart-rate-variability a strap measures all night. So recovery takes about a week to calibrate, and a couple of metrics depend on your watch model. NOOP is upfront about all of it. Every watch-derived number carries a confidence, and where the watch can't be honest, NOOP shows nothing instead of a made-up figure.")
-                    .font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            footerNote
         }
     }
 
     // MARK: - Capability + confidence table
 
     private var capabilityCard: some View {
-        NoopCard {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("WHAT THE WATCH CAN DO").font(StrandFont.overline)
-                    .tracking(StrandFont.overlineTracking)
-                    .foregroundStyle(StrandPalette.textSecondary)
-                Text("Each metric, where your Apple Watch sits on it, and why.")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+        GroupCard("WHAT THE WATCH CAN DO") {
+            // The card's own sub-caption. It sits as the first child so the Group card's between-child
+            // hairline lands under it — the mockup's header block, then a ruled row per metric.
+            Text("NOOP can run off only an Apple Watch. Here's each metric, where your watch sits on it, and why.")
+                .font(StrandFont.caption)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.bottom, 14)
 
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(metrics.enumerated()), id: \.element.id) { index, item in
-                        if index > 0 {
-                            Divider().overlay(StrandPalette.hairline)
-                                .padding(.vertical, 12)
-                        }
-                        metricRow(item)
-                    }
-                }
+            ForEach(metrics) { item in
+                metricRow(item)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
+    /// A `GroupRow`-shaped row that lets the "why" WRAP: the shared `GroupRow` floors its subtitle at
+    /// one line, and every honest explanation here is a full sentence. Same anatomy (title left, pill
+    /// right, detail beneath), so it reads as part of the same divided list.
     private func metricRow(_ item: WatchMetric) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                Image(systemName: item.icon)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(item.confidence.accent)
-                    .frame(width: 22)
-                    .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 12) {
                 Text(item.metric)
-                    .font(StrandFont.headline)
+                    .font(StrandFont.body)
                     .foregroundStyle(StrandPalette.textPrimary)
                 Spacer(minLength: 8)
                 StatePill(LocalizedStringKey(item.confidence.pillLabel),
-                          tone: item.confidence.tone, showsDot: true)
+                          tone: item.confidence.tone, showsDot: false)
             }
             Text(item.detail)
-                .font(StrandFont.footnote)
-                .foregroundStyle(StrandPalette.textSecondary)
+                .font(.system(size: 12.5))
+                .foregroundStyle(StrandPalette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         // One accessible element per metric: the screen reader hears the metric, its confidence,
         // and the plain explanation as a single, honest unit instead of three loose fragments.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.metric). \(item.confidence.pillLabel). \(item.detail)")
     }
 
-    // MARK: - HRV-sampling explanation
+    // MARK: - HRV-sampling explanation (the one conclusion this page draws)
 
     private var hrvCard: some View {
-        NoopCard(tint: StrandPalette.chargeColor) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    Image(systemName: "waveform.path.ecg")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(StrandPalette.chargeColor)
-                        .accessibilityHidden(true)
-                    Text("Why recovery calibrates over about a week")
-                        .font(StrandFont.headline)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+        ConclusionCard {
+            VStack(alignment: .leading, spacing: 11) {
+                Text("WHY RECOVERY CALIBRATES OVER ABOUT A WEEK")
+                    .font(StrandFont.overline)
+                    .tracking(StrandFont.overlineTracking)
+                    .foregroundStyle(StrandPalette.accentHover)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text("Recovery, NOOP's Charge score, is led by your heart-rate variability measured against your own personal baseline. A chest strap streams beat-to-beat data densely all night, so it can learn that baseline fast. An Apple Watch instead samples HRV, a handful of readings through the day plus overnight, so the signal is real but sparser.")
-                    .font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.textSecondary)
+                    .font(StrandFont.body)
+                    .foregroundStyle(StrandPalette.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                 Text("That's why a watch-only Charge starts out \u{201C}Calibrating\u{201D}. NOOP needs about seven nights of your HRV to learn what normal looks like for you. Until it has them it withholds the score rather than guess. Once the baseline is set, your Charge appears with its confidence, on the same 0-100 scale as a strap's.")
-                    .font(StrandFont.subhead)
+                    .font(StrandFont.body)
                     .foregroundStyle(StrandPalette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -229,53 +180,22 @@ struct AppleWatchAboutView: View {
         }
     }
 
-    // MARK: - SpO2 caveat
+    // MARK: - Start setup (injected by the caller)
 
-    private var spo2Card: some View {
-        NoopCard {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    Image(systemName: "drop.degreesign")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(StrandPalette.metricCyan)
-                        .accessibilityHidden(true)
-                    Text("A note on blood oxygen and your model")
-                        .font(StrandFont.headline)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Text("A couple of metrics depend on which Apple Watch you wear. Wrist temperature, which feeds skin temp, arrived with Series 8, so older watches don't report it. Blood oxygen is the bigger one: Apple removed the SpO₂ sensor from the newest US units over a patent dispute, so those simply don't measure it.")
-                    .font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("Where a sensor isn't on your watch, NOOP reads \u{201C}not available\u{201D} for that metric, never a zero, never an invented number. Everything else keeps working.")
-                    .font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+    private func setupRow(_ start: @escaping () -> Void) -> some View {
+        GroupCard {
+            Button(action: start) {
+                GroupRow(leading: .icon("applewatch", StrandPalette.accent),
+                         title: "Set up Apple Watch",
+                         // One line: `GroupRow` floors its subtitle at one line, and anything longer
+                         // truncates mid-sentence on an iPhone-width row.
+                         subtitle: "Connect Apple Health",
+                         showsChevron: true)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    // MARK: - Start setup (iOS only; injected by the caller)
-
-    private func startCard(_ start: @escaping () -> Void) -> some View {
-        NoopCard(tint: StrandPalette.accent) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Ready to connect your watch?")
-                    .font(StrandFont.headline)
-                    .foregroundStyle(StrandPalette.textPrimary)
-                Text("NOOP reads your Apple Watch data through Apple Health, on your phone, nothing leaves the device. You choose exactly what to share.")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button(action: start) {
-                    Label("Set up Apple Watch", systemImage: "applewatch")
-                }
-                .buttonStyle(NoopButtonStyle(.primary, fullWidth: true))
-                .accessibilityHint("Opens the Apple Watch setup and Health permission")
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .accessibilityLabel("Set up Apple Watch")
+            .accessibilityHint("Opens the Apple Watch setup and Health permission")
         }
     }
 
@@ -285,7 +205,7 @@ struct AppleWatchAboutView: View {
             .foregroundStyle(StrandPalette.textTertiary)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 6)
     }
 }
 
@@ -294,6 +214,5 @@ struct AppleWatchAboutView: View {
     NavigationStack {
         AppleWatchAboutView(onStartSetup: {})
     }
-    .preferredColorScheme(.dark)
 }
 #endif

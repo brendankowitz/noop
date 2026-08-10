@@ -623,7 +623,7 @@ private struct FloatingTabBar: View {
             tabButton(nav[2])
             tabButton(nav[3])
         }
-        .padding(.vertical, 7)
+        .padding(.vertical, 10) // mockup's chunkier 14px rhythm (10 here + 3 inside each tab)
         .padding(.horizontal, 8)
         .liquidGlass(in: Capsule())
         // The bar is a DARK frosted pill in both themes, so its text/icons use the onDark tokens
@@ -659,10 +659,19 @@ private struct FloatingTabBar: View {
             }
         } label: {
             VStack(spacing: 3) {
+                // Mockup glyph language: FILLED symbol when active, outline when not (symbolVariant
+                // no-ops for glyphs with no .fill face, e.g. the ellipsis, which keeps its weight cue).
+                // The fixed 20pt height matters: SF Symbols at the same point size still report very
+                // different natural bounding-box heights per glyph — "ellipsis" (three short dots) is
+                // much shorter than "bed.double" or "square.grid.2x2" — so without pinning the height,
+                // the VStack (and the selection capsule sized to it) came out visibly SHORTER behind
+                // More than behind the other three tabs.
                 Image(systemName: item.icon)
+                    .symbolVariant(active ? .fill : .none)
                     .font(.system(size: 18, weight: active ? .semibold : .regular))
+                    .frame(height: 20)
                 Text(item.title)
-                    .font(.system(size: 10, weight: active ? .semibold : .medium))
+                    .font(.system(size: 10.5, weight: active ? .semibold : .medium))
             }
             // The bar itself is a dark frosted glass pill (`.liquidGlass`) in BOTH themes, same as the
             // Today hero card — so this needs the scheme-invariant onDark tokens, not textSecondary
@@ -679,7 +688,7 @@ private struct FloatingTabBar: View {
                 // simulator's .ultraThinMaterial fallback, which can wash out a color-only distinction.
                 // An explicit capsule behind the active tab reads unambiguously regardless.
                 Capsule(style: .continuous)
-                    .fill(Color.white.opacity(active ? 0.16 : 0))
+                    .fill(Color.white.opacity(active ? 0.12 : 0))
             )
             .contentShape(Rectangle())
         }

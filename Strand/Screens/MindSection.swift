@@ -161,7 +161,9 @@ struct MindSection: View {
                         // A small liquid vessel filled to the link's strength (|r|) marks the row and reads
                         // its magnitude at a glance — the leading-gauge idiom Insights' effect cards use.
                         // Rest-tinted so it carries no valence (a link is just a link, never good or bad).
-                        LiquidVessel(value: line.strength, tint: StrandPalette.restBright, animated: false)
+                        HearthProgressRing(fraction: line.strength, lineWidth: 3,
+                                           trackColor: StrandPalette.restBright.opacity(0.18),
+                                           fillColor: StrandPalette.restBright, animated: false)
                             .frame(width: 22, height: 22)
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 4) {

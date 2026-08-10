@@ -84,7 +84,6 @@ public struct StrainGauge: View {
         ZStack {
             BevelGauge(
                 fraction: fraction,
-                stops: StrandPalette.strainStops,
                 tipColor: tipColor,
                 numberText: strainString,
                 captionText: showsLabel ? "of \(Int(outOf.rounded()))" : nil,

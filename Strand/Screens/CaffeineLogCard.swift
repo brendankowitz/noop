@@ -31,58 +31,127 @@ struct CaffeineLogCard: View {
     static let cutoffEnabledKey = "noop.caffeine.cutoffNudge"
     static let bedtimeMinutesKey = "noop.caffeine.bedtimeMinutes"
 
+    /// Whether the "Add a drink" composer (amount + how-long-ago pills) is expanded. Collapsed by
+    /// default so the card reads as the mockup's list — rows, then one add affordance — instead of
+    /// leading with a form.
+    @State private var composerOpen = false
+
     var body: some View {
+        // Hearth "Group" card: this is a LIST (an estimate, the cutoff setting, each logged intake),
+        // and the mockup's rule for anything list-shaped is one divided GroupCard whose LAST row is the
+        // add affordance — not a form-first tinted panel. `GroupCard` draws the hairline between rows
+        // itself, so the explicit Dividers are gone.
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             SectionHeader("Caffeine", overline: "Log")
-            NoopCard(tint: StrandPalette.accent) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Log a coffee, tea, or energy drink and NOOP shows a rough estimate of how much may still be active. It's a guide based on a typical 5 to 6 hour half-life, not a measurement.")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
+            GroupCard("Logged today") {
+                activeHint
 
-                    activeHint
-
-                    // PR#566 — the late-intake nudge sits right under the active hint when the cutoff is on
-                    // and a logged intake is past it, so the timing warning is the first thing read.
-                    lateIntakeNudge
-
-                    Divider().overlay(StrandPalette.hairline)
-
-                    // Optional amount — leave blank if you don't know it. We never invent a number.
-                    HStack {
-                        TextField("Amount in mg (optional)", text: $mgDraft)
-                            .textFieldStyle(.roundedBorder)
-                        #if os(iOS)
-                            .keyboardType(.numberPad)
-                        #endif
-                        Text("mg")
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textTertiary)
-                    }
-
-                    // Log "now" or a quick number of hours ago — mirrors the journal's day-pill row.
-                    HStack {
-                        Text("Had it")
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textSecondary)
-                        Spacer()
-                        ForEach(quickHoursAgo, id: \.self) { h in
-                            logPill(h == 0 ? "Now" : "\(h)h ago", hoursAgo: h)
-                        }
-                    }
-
-                    Divider().overlay(StrandPalette.hairline)
-                    cutoffSection
-
-                    if !store.intakes.isEmpty {
-                        Divider().overlay(StrandPalette.hairline)
-                        loggedList
-                    }
+                // PR#566 — the late-intake nudge sits right under the active hint when the cutoff is on
+                // and a logged intake is past it, so the timing warning is the first thing read. The
+                // condition is hoisted to the card's builder (rather than living inside the row) so an
+                // inapplicable nudge contributes no child, and therefore no stray hairline.
+                if cutoffEnabled, latePastCutoffCount > 0 {
+                    lateIntakeNudgeRow
                 }
+
+                cutoffSection
+
+                ForEach(store.intakes) { intake in
+                    intakeRow(intake)
+                }
+
+                // The add affordance closes the list (mockup: "Add a drink →" is a normal row with
+                // accent-coloured text, not a separate button). Expanding it reveals the composer
+                // beneath, so the row itself stays the last thing in the list.
+                VStack(alignment: .leading, spacing: 12) {
+                    addDrinkRow
+                    if composerOpen { composer }
+                }
+                .padding(.vertical, composerOpen ? 4 : 0)
             }
+            Text("Log a coffee, tea, or energy drink and NOOP shows a rough estimate of how much may still be active. It's a guide based on a typical 5 to 6 hour half-life, not a measurement.")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .onReceive(ticker) { tick = $0 }
+    }
+
+    // MARK: - Row chrome
+    //
+    // A `GroupRow`-shaped row for content that is an ALREADY-LOCALIZED runtime String (the estimate
+    // sentence, an intake's "7:40 · 130 mg" label). `GroupRow` takes a `LocalizedStringKey`, which would
+    // send those through a second, always-missing table lookup, so these rows are laid out here to the
+    // same metrics (14pt vertical, explicit hit shape) instead.
+    @ViewBuilder
+    private func logRow<Trailing: View>(title: String, titleColor: Color = StrandPalette.textPrimary,
+                                        subtitle: String? = nil,
+                                        @ViewBuilder trailing: () -> Trailing) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: title)
+                    .font(StrandFont.body)
+                    .foregroundStyle(titleColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let subtitle {
+                    Text(verbatim: subtitle)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            trailing()
+        }
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    // MARK: - Add affordance + composer
+
+    private var addDrinkRow: some View {
+        Button { composerOpen.toggle() } label: {
+            HStack(spacing: 12) {
+                Text("Add a drink")
+                    .font(StrandFont.body)
+                    .foregroundStyle(StrandPalette.accent)
+                Spacer(minLength: 8)
+                Image(systemName: composerOpen ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(StrandPalette.textTertiary.opacity(0.7))
+            }
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add a caffeine drink")
+        .accessibilityAddTraits(composerOpen ? [.isSelected] : [])
+    }
+
+    /// The logging controls. Unchanged behaviour: an OPTIONAL amount (blank stays unknown — we never
+    /// invent a number) plus "now / N hours ago".
+    @ViewBuilder private var composer: some View {
+        HStack {
+            TextField("Amount in mg (optional)", text: $mgDraft)
+                .textFieldStyle(.roundedBorder)
+            #if os(iOS)
+                .keyboardType(.numberPad)
+            #endif
+            Text("mg")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+        }
+        HStack {
+            Text("Had it")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textSecondary)
+            Spacer()
+            ForEach(quickHoursAgo, id: \.self) { h in
+                logPill(h == 0 ? "Now" : "\(h)h ago", hoursAgo: h)
+            }
+        }
     }
 
     // MARK: - Cutoff window (PR#566) — bedtime + late-intake nudge
@@ -93,13 +162,16 @@ struct CaffeineLogCard: View {
     /// number and matches the "still active" math.
     @ViewBuilder private var cutoffSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
+            // Row metrics match `GroupRow`, but written out: `GroupRow`'s subtitle is single-line, and
+            // this one carries the feature's honesty caveat in full ("a timing guide … not a
+            // measurement"), which must not be truncated to fit a row.
+            HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Cutoff before bed")
-                        .font(StrandFont.subhead)
+                        .font(StrandFont.body)
                         .foregroundStyle(StrandPalette.textPrimary)
                     Text("Warn me when I log caffeine too close to bedtime. A timing guide from your own bedtime, not a measurement.")
-                        .font(StrandFont.footnote)
+                        .font(.system(size: 12.5))
                         .foregroundStyle(StrandPalette.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -108,6 +180,9 @@ struct CaffeineLogCard: View {
                     .labelsHidden().toggleStyle(.switch).tint(StrandPalette.accent)
                     .accessibilityLabel("Warn me about caffeine close to bedtime")
             }
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
             if cutoffEnabled {
                 HStack {
                     Text("Bedtime")
@@ -122,30 +197,23 @@ struct CaffeineLogCard: View {
                     .font(StrandFont.footnote)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 12)
             }
         }
     }
 
-    /// The late-intake nudge — shown only when the cutoff is ON and at least one logged intake (today) falls
-    /// past the cutoff for the user's bedtime. Honest: it warns about TIMING ("may keep you up"), never a
-    /// health claim, and it disappears the moment no logged intake is past cutoff.
-    @ViewBuilder private var lateIntakeNudge: some View {
-        if cutoffEnabled, latePastCutoffCount > 0 {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "moon.zzz")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.statusWarning)
-                    .accessibilityHidden(true)
-                Text(lateNudgeText)
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.statusWarning)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(10)
-            .background(StrandPalette.statusWarning.opacity(0.10),
-                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .accessibilityElement(children: .combine)
+    /// The late-intake nudge — shown only when the cutoff is ON and at least one logged intake falls
+    /// past the cutoff for the user's bedtime (the caller gates it; see the card body). Honest: it warns
+    /// about TIMING ("may keep you up"), never a health claim, and it disappears the moment no logged
+    /// intake is past cutoff.
+    private var lateIntakeNudgeRow: some View {
+        logRow(title: lateNudgeText, titleColor: StrandPalette.statusWarning) {
+            Image(systemName: "moon.zzz")
+                .font(StrandFont.body)
+                .foregroundStyle(StrandPalette.statusWarning)
+                .accessibilityHidden(true)
         }
+        .accessibilityElement(children: .combine)
     }
 
     /// Count of logged intakes whose local time-of-day is past the bedtime cutoff. Uses the shared decay
@@ -217,23 +285,14 @@ struct CaffeineLogCard: View {
     @ViewBuilder private var activeHint: some View {
         let est = store.estimate()
         if est.hasActive {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(activeTitle(est))
-                    .font(StrandFont.headline)
-                    .foregroundStyle(StrandPalette.textPrimary)
-                Text(activeDetail(est))
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .accessibilityElement(children: .combine)
+            logRow(title: activeTitle(est), subtitle: activeDetail(est)) { EmptyView() }
+                .accessibilityElement(children: .combine)
         } else {
-            Text(store.intakes.isEmpty
-                 ? "No caffeine logged. Log an intake to see an estimate."
-                 : "Estimated mostly cleared. Nothing logged is likely still active.")
-                .font(StrandFont.footnote)
-                .foregroundStyle(StrandPalette.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
+            logRow(title: store.intakes.isEmpty
+                   ? String(localized: "No caffeine logged. Log an intake to see an estimate.")
+                   : String(localized: "Estimated mostly cleared. Nothing logged is likely still active."),
+                   titleColor: StrandPalette.textTertiary) { EmptyView() }
+                .accessibilityElement(children: .combine)
         }
     }
 
@@ -269,34 +328,28 @@ struct CaffeineLogCard: View {
 
     // MARK: - Logged list
 
-    @ViewBuilder private var loggedList: some View {
-        Text("Logged today")
-            .font(StrandFont.caption)
-            .foregroundStyle(StrandPalette.textTertiary)
-        ForEach(store.intakes) { intake in
-            HStack {
-                Text(intakeLabel(intake))
-                    .font(StrandFont.body)
-                    .foregroundStyle(StrandPalette.textPrimary)
-                Spacer()
-                // No remove control on an imported intake (#949): the next sync re-reads the same window
-                // from Apple Health and would bring it straight back, so offering the button would be
-                // offering something NOOP cannot honour. Remove it where it was logged.
-                if intake.isImported {
-                    Text("Apple Health")
-                        .font(StrandFont.caption)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                } else {
-                    Button {
-                        store.remove(intake.id)
-                    } label: {
-                        Image(systemName: "minus.circle.fill")
-                            .font(StrandFont.body)
-                            .foregroundStyle(StrandPalette.statusCritical)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Remove caffeine intake at \(Self.timeFormatter.string(from: intake.at))")
+    private func intakeRow(_ intake: CaffeineIntake) -> some View {
+        logRow(title: intakeLabel(intake)) {
+            // No remove control on an imported intake (#949): the next sync re-reads the same window
+            // from Apple Health and would bring it straight back, so offering the button would be
+            // offering something NOOP cannot honour. Remove it where it was logged.
+            if intake.isImported {
+                Text("Apple Health")
+                    .font(StrandFont.caption)
+                    .foregroundStyle(StrandPalette.textTertiary)
+            } else {
+                Button {
+                    store.remove(intake.id)
+                } label: {
+                    Image(systemName: "minus.circle.fill")
+                        .font(StrandFont.body)
+                        .foregroundStyle(StrandPalette.statusCritical)
+                        // 44pt hit target around the small glyph, matching the other row controls.
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Remove caffeine intake at \(Self.timeFormatter.string(from: intake.at))")
             }
         }
     }

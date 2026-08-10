@@ -16,6 +16,12 @@ import StrandAnalytics
 struct AutoWorkoutCard: View {
 
     @EnvironmentObject var repo: Repository
+    /// Observed for ONE thing: whether the illness/strain banner is currently claiming Today's single
+    /// Alert slot (see `TodayAlertPriority`). Kept here, in this small leaf, rather than passed down
+    /// from `TodayView` — the host deliberately does not observe `AppModel`, because a connected strap
+    /// republishes it ~1 Hz and that would re-render the whole dashboard mid-scroll. `HealthAlertBanner`
+    /// is its own leaf for exactly the same reason.
+    @EnvironmentObject var model: AppModel
 
     /// Whether the toggle is on. Read here too so the card disappears the instant it's switched off.
     @AppStorage(PuffinExperiment.autoDetectWorkoutsKey) private var autoDetectEnabled = false
@@ -29,7 +35,12 @@ struct AutoWorkoutCard: View {
 
     var body: some View {
         Group {
-            if autoDetectEnabled, !handledThisSession, let w = candidate {
+            // One Alert at a time: the illness/strain banner outranks this suggestion, so while it is up
+            // the card waits. Only the RENDER is suppressed — `candidate` is still loaded and the
+            // durable dismissal list is untouched, so the suggestion returns intact once the banner
+            // clears rather than being silently consumed.
+            if !TodayAlertPriority.bannerIsShowing(model),
+               autoDetectEnabled, !handledThisSession, let w = candidate {
                 card(for: w)
             }
         }
@@ -41,16 +52,13 @@ struct AutoWorkoutCard: View {
 
     @ViewBuilder
     private func card(for w: DetectedWorkout) -> some View {
-        NoopCard(tint: StrandPalette.accent) {
+        // Hearth "Alert" card: flat clay, no shadow. This is a SUGGESTION, not a conclusion — the
+        // mockup keeps it in the flagged family (with the dismiss ✕ top-right) rather than promoting it
+        // to a sage "Insight"/conclusion card, which is reserved for something the app actually decided.
+        AlertCard {
             VStack(alignment: .leading, spacing: NoopMetrics.space3) {
                 HStack(spacing: NoopMetrics.space2) {
-                    Image(systemName: "figure.run")
-                        .font(.system(size: 18))
-                        .foregroundStyle(StrandPalette.accent)
-                        .accessibilityHidden(true)
-                    Text("Looks like a workout")
-                        .font(StrandFont.headline)
-                        .foregroundStyle(StrandPalette.textPrimary)
+                    Text("Looks like a workout").strandOverline()
                     Spacer()
                     Button {
                         dismiss(w)
@@ -58,31 +66,26 @@ struct AutoWorkoutCard: View {
                         Image(systemName: "xmark")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(StrandPalette.textTertiary)
-                            .padding(NoopMetrics.space1)
+                            // 44pt hit target (Apple's floor) around a 13pt glyph — the ✕ sits in the
+                            // card's top-right corner where a small hit box is easy to miss.
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Dismiss this workout suggestion")
                 }
 
                 Text(promptText(w))
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textSecondary)
+                    .font(StrandFont.subhead)
+                    .foregroundStyle(StrandPalette.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: NoopMetrics.space3) {
-                    Button {
-                        save(w)
-                    } label: {
-                        Label("Save it", systemImage: "checkmark")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(StrandPalette.accent)
-                    .disabled(saving)
-
-                    Button("Not a workout") { dismiss(w) }
-                        .buttonStyle(.bordered)
+                HStack(spacing: NoopMetrics.rowSpacing) {
+                    NoopButton("Save it", systemImage: "checkmark", kind: .primary) { save(w) }
                         .disabled(saving)
-                    Spacer()
+                    NoopButton("Not a workout", kind: .secondary) { dismiss(w) }
+                        .disabled(saving)
+                    Spacer(minLength: 0)
                 }
             }
         }

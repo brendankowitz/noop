@@ -126,18 +126,25 @@ enum LiquidRender {
     }
 
     /// A horizontal capsule tube filled to `frac`; tilt pushes the liquid along it.
+    ///
+    /// `usesCleanFill` is upstream's own toggle between two gradient fills (a vertical tint→darker
+    /// ramp, or `progressGradient`'s 5-stop horizontal shimmer) — both violate Hearth's "skies are the
+    /// only gradients in the app" rule, and only ONE of ~20 call sites (Today's Key Metrics tile) had
+    /// ever been opted into the newer of the two. Rather than leave the other ~19 (Breathing, Health,
+    /// Sleep, Compare, Live, Stress, …) on the old gradient-plus-sparkle path by default, the fill
+    /// below is unconditionally flat for everyone; the parameter stays in the signature so the one
+    /// call site that already passes it explicitly keeps compiling, it just no longer changes anything.
     static func tube(_ base: GraphicsContext, _ size: CGSize, _ sim: LiquidSim, now: Double,
                      frac: Double, tint: Color, showsHighlight: Bool = true,
                      usesCleanFill: Bool = false) {
         let w = size.width, h = size.height, r = h / 2
         let outline = Path(roundedRect: CGRect(x: 0.5, y: 0.5, width: w - 1, height: h - 1), cornerRadius: r)
-        var ctx = base
-        ctx.fill(outline, with: .color(NoopVisualStyle.inset))
-        ctx.stroke(
-            outline,
-            with: .color(NoopVisualStyle.border.opacity(0.72)),
-            lineWidth: NoopMetrics.hairlineWidth
-        )
+        let ctx = base
+        // Hearth: a warm inset "well" track (the canonical surfaceInset token BevelGauge uses), not the
+        // old hardcoded near-black — that read as a harsh dark slot on the cream Key Metrics card. The
+        // rim follows suit with a warm hairline (the white 0.07 rim vanished on cream).
+        ctx.fill(outline, with: .color(StrandPalette.surfaceInset))
+        ctx.stroke(outline, with: .color(StrandPalette.hairlineStrong), lineWidth: 1)
 
         var clip = ctx
         clip.clip(to: outline)
@@ -150,29 +157,16 @@ enum LiquidRender {
         p.addQuadCurve(to: CGPoint(x: edge - r * 0.3, y: h), control: CGPoint(x: edge + bulge, y: h / 2))
         p.addLine(to: CGPoint(x: 0, y: h))
         p.closeSubpath()
-        let fillGradient = usesCleanFill
-            ? progressGradient(tint)
-            : Gradient(colors: [tint.opacity(0.84), tint.liquidDarker(0.28).opacity(0.86)])
-        clip.fill(p, with: .linearGradient(
-            fillGradient,
-            startPoint: CGPoint(x: 0, y: usesCleanFill ? h / 2 : 0),
-            endPoint: CGPoint(x: usesCleanFill ? w : 0, y: usesCleanFill ? h / 2 : h)
-        ))
+        // Hearth: a FLAT single tint (skies are the only gradients in the app), not the old top-lit
+        // tint → darker-tint vertical linearGradient, nor `progressGradient`'s horizontal shimmer.
+        clip.fill(p, with: .color(tint.opacity(0.84)))
         if showsHighlight {
             clip.fill(Path(CGRect(x: 2, y: 1.2, width: max(0, edge - r * 0.6), height: 1)),
                       with: .color(.white.opacity(0.12)))
         }
-        if !usesCleanFill {
-            for i in 0..<min(8, sim.flecks.count) {
-                let f = sim.flecks[i]
-                let spark = pow(max(0, sin(f.ph + sim.a * 5 + now * f.sp)), 10)
-                if spark < 0.08 { continue }
-                let fx = 3 + (f.x + 1.05) / 2.1 * max(1, edge - 8)
-                clip.fill(Path(CGRect(x: fx, y: h * 0.15 + f.z * h * 0.7,
-                                      width: 1 + spark, height: 1 + spark)),
-                          with: .color(.white.opacity(spark * 0.6)))
-            }
-        }
+        // Hearth: no sparkle flecks — the mockup's bars are quiet flat fills, and the little animated
+        // "bubbles" read as an un-fixed leftover of the old liquid-glass treatment even after the track/
+        // fill colors went flat.
     }
 
     /// The live heart-rate curve as a glowing liquid thread with a travelling glint.

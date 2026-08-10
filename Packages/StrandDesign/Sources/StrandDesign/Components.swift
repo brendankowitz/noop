@@ -210,7 +210,11 @@ public struct StatTile<Accessory: View>: View {
                 }
                 Spacer(minLength: 4)
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(value).font(StrandFont.number(26)).foregroundStyle(accent).lineLimit(1).minimumScaleFactor(0.6)
+                    // Mockup's on-paper number voice is weight 300 (a ~25px Light numeral, #16150F),
+                    // not a semibold gauge digit. `.light` resolves to Work Sans Light on the fork; on
+                    // upstream (Helvetica Neue) it stays a clean light numeral. Tracking per the mockup.
+                    Text(value).font(StrandFont.number(26, weight: .light)).tracking(-0.4)
+                        .foregroundStyle(accent).lineLimit(1).minimumScaleFactor(0.6)
                     Spacer(minLength: 0)
                     // Trend chip — the delta as a tinted pill with a direction arrow.
                     if let delta { TrendChip(text: delta, color: deltaColor) }
@@ -401,7 +405,6 @@ public struct SegmentedPillControl<T: Hashable>: View {
     /// call site omits it and keeps the prior `adaptsToAvailableWidth` behavior unchanged.
     let fillsAvailableWidth: Bool
     @Binding var selection: T
-    @Environment(\.colorScheme) private var scheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     public init(_ items: [T], selection: Binding<T>, adaptsToAvailableWidth: Bool = false,
                 fillsAvailableWidth: Bool = false,
@@ -455,11 +458,14 @@ public struct SegmentedPillControl<T: Hashable>: View {
                     Text(label(item))
                         .font(StrandFont.captionNumber)
                         .lineLimit(equalWidth ? 1 : nil)
-                        // Active segment is SELECTION CHROME, so it follows the accent: on dark a
-                        // gold-gradient pill with gold-deep ink; on light a flat blue accent pill with
-                        // white ink (so the light theme's selection matches its blue chrome, not gold).
+                        // Selection chrome: a raised paper pill with ink text (the mockup's own segmented
+                        // control — "selected: background #F6F3EC, color #16150F" — not an accent-colored
+                        // pill). The old WHOOP-era recipe put white text on the accent color for light
+                        // mode; Hearth's sage accent isn't dark enough for that (~2.3:1, well under the
+                        // 4.5:1 floor) — this reads correctly regardless of system light/dark since Hearth
+                        // sets both sides of every token to the same warm-paper values.
                         // Disabled segments drop to a fainter tertiary so the lock reads at a glance.
-                        .foregroundStyle(sel ? (scheme == .light ? Color.white : StrandPalette.textPrimary)
+                        .foregroundStyle(sel ? StrandPalette.textPrimary
                                              : StrandPalette.textTertiary.opacity(enabled ? 1 : 0.35))
                         // Fill the segment height so the selected pill has EQUAL margins to the track
                         // on every side. (The old compact pill inside a taller 44pt touch frame left
@@ -469,13 +475,10 @@ public struct SegmentedPillControl<T: Hashable>: View {
                                maxHeight: .infinity)
                         .padding(.horizontal, equalWidth ? NoopMetrics.space1 : 9)
                         .background(
-                            // WHOOP selection chrome: a flat LIGHTER-grey pill on dark (white ink), a flat
-                            // blue accent pill on light — no gold, no gradient.
                             Capsule(style: .continuous)
-                                .fill(sel ? (scheme == .light
-                                             ? AnyShapeStyle(StrandPalette.accent)
-                                             : AnyShapeStyle(Color(hex: "#363B41")))
-                                          : AnyShapeStyle(Color.clear))
+                                .fill(sel ? AnyShapeStyle(StrandPalette.surfaceRaised) : AnyShapeStyle(Color.clear))
+                                .shadow(color: sel ? StrandPalette.cardShadowColor.opacity(0.1) : .clear,
+                                        radius: 3, x: 0, y: 1)
                         )
                         .contentShape(Capsule(style: .continuous))
                 }
@@ -559,12 +562,13 @@ public struct NoopPrimaryButtonStyle: ButtonStyle {
         let pressed = configuration.isPressed
         return configuration.label
             .font(StrandFont.body.weight(.bold))
-            .foregroundStyle(StrandPalette.goldDeepText)
+            .foregroundStyle(NoopButtonPalette.primaryLabel)
             .padding(.vertical, 11).padding(.horizontal, 18)
             .frame(maxWidth: .infinity)
             .background(
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(LinearGradient(gradient: StrandPalette.goldGradient, startPoint: .topLeading, endPoint: .bottomTrailing))
+                RoundedRectangle(cornerRadius: NoopButtonMetrics.cornerRadius, style: .continuous)
+                    .fill(NoopButtonPalette.primaryFlatFill.map { AnyShapeStyle($0) }
+                          ?? AnyShapeStyle(LinearGradient(gradient: StrandPalette.goldGradient, startPoint: .topLeading, endPoint: .bottomTrailing)))
             )
             // A crisp, subtle NEUTRAL elevation — the gold cast-glow read as too much against the
             // clean design, so it's a soft dark lift now, no bloom.
@@ -576,19 +580,24 @@ public struct NoopPrimaryButtonStyle: ButtonStyle {
     }
 }
 
-/// Secondary: inset well + 1px white-12 border + primary text. Quieter than gold.
+/// Secondary: inset well + muted label. Quieter than the primary. The hairline border is drawn only
+/// when the fork has NOT supplied a flat primary fill — i.e. upstream keeps its outlined inset well;
+/// the Hearth mockup's secondary is a borderless `#DED9CC` pill with muted `#5A564C` text.
 public struct NoopSecondaryButtonStyle: ButtonStyle {
     public init() {}
     public func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed
-        let shape = RoundedRectangle(cornerRadius: 13, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: NoopButtonMetrics.cornerRadius, style: .continuous)
+        let borderless = NoopButtonPalette.primaryFlatFill != nil
         return configuration.label
             .font(StrandFont.body.weight(.semibold))
-            .foregroundStyle(StrandPalette.textPrimary)
+            .foregroundStyle(NoopButtonPalette.secondaryLabel)
             .padding(.vertical, 11).padding(.horizontal, 18)
             .frame(maxWidth: .infinity)
-            .background(shape.fill(StrandPalette.surfaceInset))
-            .overlay(shape.strokeBorder(StrandPalette.hairline, lineWidth: 1))
+            .background(shape.fill(NoopButtonPalette.secondaryFill))
+            .overlay {
+                if !borderless { shape.strokeBorder(StrandPalette.hairline, lineWidth: 1) }
+            }
             .opacity(pressed ? 0.82 : 1)
             .scaleEffect(pressed ? 0.98 : 1)
             .animation(StrandMotion.interactive, value: pressed)

@@ -566,7 +566,6 @@ private struct DigestScoreCard: View {
             }
             BevelGauge(
                 fraction: fraction,
-                stops: domain.gradient.stops,
                 tipColor: domain.bright,
                 numberText: numberText,
                 // The 82pt embedded gauge would reduce its proportional caption to

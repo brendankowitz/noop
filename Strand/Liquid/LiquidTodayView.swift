@@ -19,7 +19,6 @@ import StrandAnalytics
 struct LiquidTodayView: View {
     @EnvironmentObject var repo: Repository
     @EnvironmentObject var router: NavRouter
-    @EnvironmentObject var profile: ProfileStore
     // For the pull-to-sync gesture (#334): a pull kicks a manual strap history offload via ble.syncNow().
     // Observe BLEManager, NOT AppModel — AppModel @Publishes `bpm` on the ~1 Hz HR tick, so observing it
     // would re-render all of Today every second (the exact churn the LiveState leaves isolate). BLEManager
@@ -65,14 +64,12 @@ struct LiquidTodayView: View {
     @State private var showSettings = false
     @State private var synthesisExpanded = false
     @State private var showLiveSession = false
+    /// The header's consolidated menu (Settings / Customize Today / Devices) — Hearth header cleanup.
+    @State private var showTodayMenu = false
     /// The hero ring rail's currently focused score — the kSparks key of one of the three REAL scores
     /// ("recovery" / "strain" / "sleep_performance"), or nil for the default unfocused hero. Tapping a
     /// ring toggles this; the focused state reveals a 14-day sparkline from `kSparks` + an honest read.
     @State private var focusedMetric: String? = nil
-    /// The hero rail's viewport width, captured so the three-ring rail can CENTRE within the card when it
-    /// fits (the default reads balanced, like the old fixed row) yet still scroll if it ever overflows
-    /// (small screens / large Dynamic Type). 0 until first layout — content sizes naturally until then.
-    @State private var heroRailWidth: CGFloat = 0
 
     /// Live Sessions (silent guardian) beta gate — the SAME key the Settings toggle writes. Default ON
     /// (the entry is BETA-labelled in-UI); off removes the Start-session control entirely.
@@ -124,23 +121,40 @@ struct LiquidTodayView: View {
     @State private var refreshArmed = false
     @State private var refreshing = false
     @State private var pullHaptic = 0
-    private let pullThreshold: CGFloat = 80
+    /// Raised well past the reveal zone (was 130, before that 80): real on-device pulls comfortably
+    /// overshoot 130pt on a normal firm drag, which made every pull resolve to "sync" and the 8c
+    /// reveal effectively unreachable. A wide gap gives the reveal zone real room before the deep
+    /// pull-to-sync zone begins — see `handlePull`.
+    private let pullThreshold: CGFloat = 190
 
-    /// Mock Vitality purple (#9b7bff) has no exact StrandPalette token in this theme.
-    private let liquidPurple = Color(.sRGB, red: 0x9b / 255, green: 0x7b / 255, blue: 0xff / 255, opacity: 1)
-    /// The liquid heart pink (matches LiquidThread's default + the mockup #ff6b81).
-    private let liquidHeart = Color(.sRGB, red: 1, green: 107 / 255, blue: 129 / 255, opacity: 1)
-    /// Hero card fill: a translucent near-black so it floats over the sky. Hearth warms this from the
-    /// original cool navy-black to the mockup's ink (#16150F) — same scheme-invariant 0.80 opacity.
-    private let heroFill = Color(.sRGB, red: 22 / 255, green: 21 / 255, blue: 15 / 255, opacity: 0.80)
+    // Hearth 8c — "Above the top": the pull-revealed control slot. Zero pixels at rest; a shallow
+    // pull fades in a day-pill + customize preview, then LATCHES the slot open live — a week
+    // scrubber + calendar + customize row, with the 7b sync line in the same slot when relevant —
+    // the instant the drag crosses `revealThreshold`, mirroring the mockup's continuous
+    // Pulling → Held states instead of waiting for the finger to lift. Closes on any selection, or
+    // on scrolling back down.
+    #if DEBUG
+    // `--demo-reveal` pins the slot open for the screenshot harness (synthetic sim drags can't
+    // rubber-band a scroll view, so the pull can't be exercised by automation). DEBUG-only.
+    @State private var revealOpen = CommandLine.arguments.contains("--demo-reveal")
+    #else
+    @State private var revealOpen = false
+    #endif
+    /// The deepest overscroll of the CURRENT pull gesture, used only to decide the DEEP pull-to-sync
+    /// zone at release (the reveal zone below it now opens live — see `handlePull`).
+    @State private var gestureMaxPull: CGFloat = 0
+    private let revealThreshold: CGFloat = 48
+
+    /// Vitality's accent — the warm plum palette token (the old hardcoded #9b7bff cool violet fought
+    /// the Hearth palette; every color must come off the token sheet).
+    private var liquidPurple: Color { StrandPalette.metricPurple }
+    /// The live-HR trace tint — the palette's terracotta rose (was a hardcoded #ff6b81 neon pink).
+    private var liquidHeart: Color { StrandPalette.metricRose }
     /// "Card transparency" (0–100, default 100): fades every liquid card surface here — the hero, the
     /// session-start row, the metric tiles and the `card` helper — in lockstep with the frosted cards.
     /// Content sits above the surface so it stays readable. Mirrors Kotlin `NoopPrefs.cardOpacityPercent`.
     @AppStorage(CardAppearancePrefs.opacityKey) private var cardOpacityPercent = CardAppearancePrefs.defaultPercent
     private var cardOpacity: Double { max(0, min(1, Double(cardOpacityPercent) / 100)) }
-    /// "Sky behind cards" (default ON): extend the day-cycle sky behind the WHOLE scroll so the
-    /// Card-transparency slider reveals it under every card. User-toggleable. Mirrors Kotlin `NoopPrefs.skyBehindCards`.
-    @AppStorage(SkyBehindCardsPrefs.enabledKey) private var skyBehindCards = true
     /// Day-cycle scene backdrop (#698). Default ON. When off, the liquid Today drops the sky for the plain
     /// dark canvas — parity with Android and the classic TodayView, which already honour this pref. Mirrors
     /// Kotlin `NoopPrefs.showDayCycleBackground`.
@@ -201,6 +215,9 @@ struct LiquidTodayView: View {
                 selectedDayOffset = Self.pickedDayOffset(pickedDate: newValue,
                                                          anchorLogicalDay: Repository.logicalDay(Date()))
                 showDayPicker = false
+                // The calendar lives in the 8c revealed slot now — a pick is a selection, so the
+                // slot closes with it (same as tapping a scrubber day).
+                withAnimation(.easeOut(duration: 0.25)) { revealOpen = false }
             }
         )
     }
@@ -261,10 +278,29 @@ struct LiquidTodayView: View {
                 }
                 .frame(height: 0)
 
-                liquidRefreshIndicator   // grows in the revealed space; a vessel filling with the pull
+                pullRevealSlot   // 8c control slot + the pull-gap indicator (preview / refresh vessel)
 
-                VStack(alignment: .leading, spacing: 12) {
+                // ── Sky (Moment) block ─────────────────────────────────────────────────────────
+                // The mockup's sky header: brand row + the hero DIRECTLY on the gradient (no
+                // containing card), then the pill CTA. The hero + Start-session are pinned to the
+                // sky — the Moment card IS the sky in the Hearth design — so they no longer float
+                // in the reorderable sheet order (hiding them via Arrange still works: a hidden
+                // section is absent from `sectionOrder` and renders nothing here).
+                VStack(alignment: .leading, spacing: 26) {
                     scene
+                    if sectionOrder.contains(.hero) { heroCard }
+                    if sectionOrder.contains(.liveSession), liveSessionsBeta { liveSessionStartRow }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 30) // sit the title lower into the sky, not jammed under the status bar
+                .padding(.bottom, 50 + 26) // mockup: 50 sky bottom pad + the sheet's -26 overlap
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                // ── Sheet ──────────────────────────────────────────────────────────────────────
+                // The cream content surface that overlaps the sky (mockup: #E9E5DB, radius 32 32 0 0,
+                // margin-top -26). Everything below the hero reads as warm paper, not floating cards
+                // on a dark sky — this is the single biggest "Hearth vs generic dark app" cue.
+                VStack(alignment: .leading, spacing: 12) {
                     // The strain/illness early-warning banner, dropped in the liquid Home rewrite. Liquid is
                     // the DEFAULT Today on both platforms (RootTabView.swift's liquidTodayEnabled = true,
                     // RootView.swift likewise), so while this was unmounted a RAISED health alert had no
@@ -279,15 +315,12 @@ struct LiquidTodayView: View {
                     // pinned above the reorderable block so an active manual workout is immediately visible
                     // and taps straight through to Live. Renders nothing when no workout is active.
                     ActiveWorkoutIndicatorSection()
-                    // #today-layout (parity with Android): every Today section — the Charge/Effort/Rest hero
-                    // and Start-session included — renders in the user's saved order. Reorder via the Arrange
-                    // sheet (the header's up/down button; native drag rows); the order persists under the
-                    // byte-identical "today.sectionOrder" key Android uses. A gated-off Start-session renders
-                    // nothing and keeps its slot in the saved order.
-                    ForEach(sectionOrder) { section in
+                    // #today-layout (parity with Android): the remaining Today sections render in the
+                    // user's saved order (hero/liveSession live in the sky block above; their slots in
+                    // the saved order are skipped here, everything else keeps its relative order).
+                    ForEach(sectionOrder.filter { $0 != .hero && $0 != .liveSession }) { section in
                         switch section {
-                        case .hero: heroCard
-                        case .liveSession: if liveSessionsBeta { liveSessionStartRow }
+                        case .hero, .liveSession: EmptyView() // rendered in the sky block above
                         case .synthesis: synthesisSection
                         case .keyMetrics: keyMetricsSection
                         case .workouts: lastWorkoutsSection
@@ -314,8 +347,14 @@ struct LiquidTodayView: View {
                     dataSourcesSection
                     Color.clear.frame(height: 90) // floating tab-bar clearance
                 }
-                .padding(.horizontal, NoopMetrics.screenHPadding)
-                .padding(.top, 30) // sit the title lower into the sky, not jammed under the status bar
+                .padding(.horizontal, 20)
+                .padding(.top, 26)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    UnevenRoundedRectangle(topLeadingRadius: 32, topTrailingRadius: 32, style: .continuous)
+                        .fill(StrandPalette.surfaceBase)
+                )
+                .padding(.top, -26) // overlap the sky, mockup's margin-top: -26
             }
             #if os(macOS)
             // Keep the phone-shaped column readable + centred on the wide mac detail pane. The sky is a
@@ -324,30 +363,49 @@ struct LiquidTodayView: View {
             .frame(maxWidth: .infinity)
             #endif
         }
+        .liquidAlwaysBounceVertical()
         .coordinateSpace(name: Self.pullSpace)
-        .onPreferenceChange(PullOffsetKey.self) { handlePull($0) }
+        // Two drivers, ONE consumer. iOS 18+ reads the scroll view's own ScrollGeometry (fires
+        // synchronously on every scroll tick, straight off the UIScrollView), which is deterministic
+        // where the GeometryReader/PreferenceKey probe is not: preference propagation rides the
+        // render/diff loop and proved unreliable for continuous overscroll tracking on real devices
+        // (the on-device "pull does nothing" bug). The probe stays as the iOS 17 / macOS fallback;
+        // only one driver ever feeds handlePull, so the zones can't double-fire.
+        .liquidPullGeometryDriver { sample in
+            handlePull(sample.overscroll)
+        }
+        .onPreferenceChange(PullOffsetKey.self) { y in
+            if !Self.hasScrollGeometryDriver { handlePull(y) }
+        }
         // The sky is a FIXED full-bleed backdrop drawn behind the scroll content, edge-to-edge under the
         // status bar. A ScrollView background does not scroll with the content, so pulling down never
         // moves the sky (the exact behaviour the scaffold uses on the classic Today).
         .background(alignment: .top) {
             ZStack(alignment: .top) {
                 StrandPalette.surfaceBase
-                // Day-cycle scene (#698): the sky only paints when the toggle is ON; off = the plain
-                // surfaceBase canvas above (parity with Android + the classic TodayView).
-                if showDayCycleBackground {
-                    // Reduce-motion (and low-power) users get the same sky posed still — no twinkle/breath.
-                    // Also static until the first data load settles, so launch isn't fighting a live sky too.
-                    // "Sky behind cards" (opt-in): fill the whole backdrop with a softer settle so the sky
-                    // reads under every card, instead of the default 340 top band that dissolves to canvas.
-                    Group {
-                        if poseStill || !dataLoaded { LiquidSkyStatic(hour: liveHour, settleStrength: skyBehindCards ? 0.78 : 1) }
-                        else { LiquidSky(hour: liveHour, settleStrength: skyBehindCards ? 0.78 : 1) }
+                // The sheet redesign makes everything below the hero an OPAQUE cream surface, so the
+                // backdrop only ever shows through in the sky band above it (plus top overscroll).
+                // Day-cycle ON paints the live sky; OFF paints the mockup's flat ink instead of bare
+                // cream — the hero's white-on-sky text must stay readable either way.
+                Group {
+                    if showDayCycleBackground {
+                        // Reduce-motion (and low-power) users get the same sky posed still — no twinkle/
+                        // breath. Also static until the first data load settles, so launch isn't fighting
+                        // a live sky too.
+                        if poseStill || !dataLoaded { LiquidSkyStatic(hour: liveHour, settleStrength: 1) }
+                        else { LiquidSky(hour: liveHour, settleStrength: 1) }
+                    } else {
+                        ZStack(alignment: .top) {
+                            liquidFlatInkColor
+                            LinearGradient(
+                                colors: [StrandPalette.surfaceBase.opacity(0), StrandPalette.surfaceBase],
+                                startPoint: UnitPoint(x: 0.5, y: 0.45), endPoint: UnitPoint(x: 0.5, y: 1.0))
+                        }
                     }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: skyBehindCards ? nil : 340, alignment: .top)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
                 }
+                .frame(maxWidth: .infinity)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
             .ignoresSafeArea()
         }
@@ -390,6 +448,13 @@ struct LiquidTodayView: View {
                     .liquidSheetDoneChrome { showSettings = false }
             }
         }
+        .sheet(isPresented: $showTodayMenu) {
+            TodayMenuSheet(
+                onDevices: { selectMenuAction { router.openDevices() } },
+                onCustomize: { selectMenuAction { customizationDestination = .today } },
+                onSettings: { selectMenuAction { showSettings = true } }
+            )
+        }
         // Live Session (silent guardian, beta): the in-session screen owns the whole display — full
         // screen on iOS (nothing should compete with the ring mid-workout), a sheet on macOS where
         // fullScreenCover doesn't exist.
@@ -408,65 +473,80 @@ struct LiquidTodayView: View {
         }
     }
 
-    // MARK: - Liquid pull-to-refresh
+    // MARK: - Liquid pull-to-refresh + the 8c revealed control slot
 
     static let pullSpace = "liqTodayScroll"
 
-    /// Reserves the revealed space at the top and shows a vessel that fills with the pull, then sloshes
-    /// while the refresh runs. A plain computed property (not a LiveState-isolated leaf) — it doesn't read
-    /// LiveState itself, so it's cheap to re-evaluate as part of the main body. It hands the actual
-    /// visibility decision to `LiquidRefreshIndicator` below, which DOES own LiveState.
-    private var liquidRefreshIndicator: some View {
-        LiquidRefreshIndicator(pullY: pullY, pullThreshold: pullThreshold, refreshing: refreshing,
-                               liquidHeart: liquidHeart)
+    /// True where the ScrollGeometry driver (iOS 18+) owns `handlePull`; the preference probe then
+    /// only feeds the DEBUG readout instead of double-driving the pull zones.
+    static var hasScrollGeometryDriver: Bool {
+        #if os(iOS)
+        if #available(iOS 18.0, *) { return true }
+        #endif
+        return false
     }
 
-    /// Arm the refresh once the pull passes the threshold; FIRE it when the finger releases (the pull
-    /// springs back toward zero). Guarded so it can't double-fire or re-trigger mid-refresh.
-    private func handlePull(_ y: CGFloat) {
-        pullY = max(0, y)
-        guard !refreshing else { return }
-        if pullY >= pullThreshold, !refreshArmed {
-            refreshArmed = true
-            pullHaptic &+= 1
-        }
-        if refreshArmed, pullY < 6 {
-            refreshArmed = false
-            refreshing = true
-            Task {
-                // #334 (iOS twin of Android #426): a pull requests a fresh strap history offload, not just
-                // a UI reload. syncNow() is internally gated (connected + bonded + not-already-backfilling),
-                // so a pull while disconnected or mid-offload safely no-ops. The sync status chip owns the
-                // ongoing offload progress; the pull spinner stays short (the reload below).
-                ble.syncNow()
-                await repo.refresh()
-                await load()
-                try? await Task.sleep(nanoseconds: 350_000_000)   // let the fill read as "done"
-                withAnimation(.easeOut(duration: 0.25)) { refreshing = false }
+    /// The top-of-scroll slot (Hearth 8c): when latched open, the week scrubber + calendar +
+    /// customize row (with the 7b sync line in the same slot when relevant) occupies REAL layout
+    /// height above the header; beneath it, the pull gap shows the reveal preview on a shallow
+    /// pull and the refresh vessel on a deep one. At rest, with nothing open, this is zero pixels.
+    private var pullRevealSlot: some View {
+        VStack(spacing: 0) {
+            if revealOpen {
+                revealedControls
+                    // Insertion is .identity: by the time the latch fires, the SAME row is already
+                    // fully faded in inside the pull gap (see `revealingPreview`), top-aligned to
+                    // exactly this position — animating it in again would read as a blink/jump cut.
+                    // Removal keeps the fade+slide for the close (scroll-down / selection).
+                    .transition(.asymmetric(insertion: .identity,
+                                            removal: .opacity.combined(with: .move(edge: .top))))
             }
+            LiquidPullGapIndicator(pullY: pullY, pullThreshold: pullThreshold,
+                                   revealThreshold: revealThreshold,
+                                   refreshing: refreshing, revealOpen: revealOpen,
+                                   liquidHeart: liquidHeart,
+                                   preview: AnyView(revealingPreview))
         }
     }
 
-    // MARK: - Scene (sky title + controls + hero)
+    /// What the pull gap shows WHILE pulling, before the latch: the SAME `revealedControls` end
+    /// state, fading/scaling in continuously with pull progress — "revealing" and "revealed" are one
+    /// view at different opacity, never two different hierarchies swapped at the threshold (the
+    /// original two-stage preview read as an abrupt content change on device). Read-only — the
+    /// finger is still down, so nothing here is a tap target until `revealOpen` latches; only one
+    /// instance of `revealedControls` ever exists at a time (the gap stops rendering this the moment
+    /// the latch inserts the interactive copy), so its popover/sheet anchors never double up.
+    private var revealingPreview: some View {
+        revealedControls
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)   // transitional, mid-gesture — the open slot carries the a11y
+    }
 
-    private var scene: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top) {
-                Button { showDayPicker = true } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(dayTitle)
-                            .font(StrandFont.rounded(28))
-                            .foregroundStyle(StrandPalette.textPrimary)
-                            .shadow(color: .black.opacity(0.4), radius: 10, y: 1)
-                        Text(dateLine)
-                            .font(StrandFont.caption)
-                            .foregroundStyle(StrandPalette.textSecondary)
-                            .shadow(color: .black.opacity(0.35), radius: 8, y: 1)
-                    }
-                    .contentShape(Rectangle())
+    /// The latched-open 8c slot: a 7-day scrubber (the mockup's held state) + calendar + customize,
+    /// then the 7b sync line when there's something to say. Sits ABOVE the header in the sky.
+    /// Icon glyphs here are plain warm white (`.white.opacity(0.9)`) — the established convention for
+    /// everything sitting directly on the sky (hamburger, status pill, scrubber text, pull preview).
+    /// A semantic palette token like `chargeBright` is tuned for the paper/card surfaces below; in the
+    /// Hearth theme it's a muted sage (#8FA383) that disappears against the sage sky gradient.
+    private var revealedControls: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 5) {
+                ForEach(Self.weekScrubDays(anchor: Repository.logicalDay(Date()))) { d in
+                    scrubDayColumn(d)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(dayTitle). Tap to pick a day, swipe to change day.")
+                // The graphical calendar keeps a seat (a real, shipped affordance the mockup's
+                // 7-day row alone would silently drop — older days stay one tap away).
+                Button { showDayPicker = true } label: {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .frame(width: 36, height: 54)
+                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(.white.opacity(0.14)))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(LiquidPressStyle())
+                .accessibilityLabel("Pick a date")
                 .popover(isPresented: $showDayPicker) {
                     DatePicker("", selection: dayPickerBinding, in: ...Repository.logicalDay(Date()),
                                displayedComponents: [.date])
@@ -476,78 +556,202 @@ struct LiquidTodayView: View {
                         .frame(minWidth: 320, minHeight: 360)
                         .liquidPopoverAdaptation()
                 }
-                Spacer(minLength: 8)
-                HStack(spacing: 8) {
-                    // Profile pic (the one set in Settings) → opens Settings, matching the classic Today.
-                    Button { showSettings = true } label: {
-                        Color.clear.frame(width: headerClusterControl, height: headerClusterControl)
-                    }
-                    .nativeLiquidGlassHeaderButton()
-                    .overlay {
-                        GeometryReader { proxy in
-                            let diameter = min(proxy.size.width, proxy.size.height)
-                            ProfileAvatarView(imageData: profile.avatarImageData, size: diameter)
-                                .frame(width: diameter, height: diameter)
-                                .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
-                        }
-                        .allowsHitTesting(false)
-                    }
-                    .nativeLiquidGlassPhotoFinish()
-                    .accessibilityLabel("Profile and settings")
-                    LiquidAddButton()
-                    LiquidBatteryButton()
-                    // One entry point for section order/visibility and both nested card editors.
-                    Button { customizationDestination = .today } label: {
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(StrandPalette.textPrimary)
-                            .frame(width: headerClusterControl, height: headerClusterControl)
-                    }
-                    .nativeLiquidGlassHeaderButton()
-                    .accessibilityLabel("Customize Today")
+                Button {
+                    withAnimation(.easeOut(duration: 0.25)) { revealOpen = false }
+                    customizationDestination = .today
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .frame(width: 36, height: 54)
+                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(.white.opacity(0.14)))
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(LiquidPressStyle())
+                .accessibilityLabel("Customize Today")
+                // Quick actions (Live HR / workout / journal / breathe): the mockup's own reasoning
+                // for pulling this off the header (no Food-tab capture button to move it onto) doesn't
+                // apply here, but it agrees the header itself should stay exactly three things — so
+                // this joins calendar/customize in the same revealed row instead.
+                Button { router.requestQuickActions() } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .frame(width: 36, height: 54)
+                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(.white.opacity(0.14)))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(LiquidPressStyle())
+                .accessibilityLabel("Quick actions")
             }
-            // Subtle NOOP wordmark in the sky between header and hero. Perfectly centred (a letter row has
-            // no trailing tracking gap the way `Text(...).tracking()` does), with a tap easter egg.
-            // #today-layout: the hero + Start-session row moved OUT of the scene into the reorderable
-            // section block below. The wordmark's bottom pad (10) + the section VStack's 12 spacing keeps
-            // the default hero-under-wordmark gap at the original 22.
-            LiquidWordmark()
-                .padding(.top, 30)
-                .padding(.bottom, 10)
+            // The 7b sync line renders here while the slot is open — the mockup's "same zone the
+            // sync line uses"; zero height when there's nothing to say.
+            LiquidSyncLine(inline: true, topPadding: 13)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 14)
+        .padding(.bottom, 8)
+    }
+
+    /// One column of the 8c week scrubber. Selection mirrors `HeroScoreCell`'s focused idiom
+    /// (warm-white fill, ink value); days older than the banked history render dimmed + inert.
+    private func scrubDayColumn(_ d: ScrubDay) -> some View {
+        let selected = selectedDayOffset == d.offset
+        let available = d.offset <= earliestDayOffset
+        return Button {
+            guard available, !selected else { return }
+            withAnimation(StrandMotion.interactive) {
+                selectedDayOffset = d.offset
+                revealOpen = false
+            }
+        } label: {
+            VStack(spacing: 5) {
+                Text(d.weekday.uppercased())
+                    .font(StrandFont.overlineScaled(9.5)).tracking(0.6)
+                    .foregroundStyle(selected ? StrandPalette.textPrimary.opacity(0.6) : .white.opacity(0.5))
+                Text(d.dayNumber)
+                    .font(StrandFont.number(15, weight: selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? StrandPalette.textPrimary : .white.opacity(0.7))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(selected ? Color.white.opacity(0.92) : Color.white.opacity(0.14)))
+            .opacity(available ? 1 : 0.35)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("\(d.weekday) \(d.dayNumber)"))
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
+    /// One 8c scrubber column's identity: the day-offset it selects + its locale-formatted labels.
+    struct ScrubDay: Identifiable, Equatable {
+        let offset: Int          // 0 = today … 6 = six days back
+        let weekday: String      // abbreviated weekday, user's locale
+        let dayNumber: String    // day-of-month, user's locale
+        var id: Int { offset }
+    }
+
+    /// The scrubber's last 7 calendar days ending on the anchor (today's logical day), oldest
+    /// first — pure + static so the offset/label math is testable with no view or clock. Labels
+    /// format in the PASSED calendar's timezone (not silently the system one), so the arithmetic
+    /// and the printed day number can never disagree across a timezone boundary.
+    static func weekScrubDays(anchor: Date, calendar: Calendar = .current,
+                              locale: Locale = .autoupdatingCurrent) -> [ScrubDay] {
+        let style = Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone)
+        return (0...6).reversed().map { off in
+            let day = calendar.date(byAdding: .day, value: -off, to: anchor) ?? anchor
+            return ScrubDay(offset: off,
+                            weekday: day.formatted(style.weekday(.abbreviated)),
+                            dayNumber: day.formatted(style.day()))
         }
     }
 
-    /// One-tap Live Session start (silent guardian, beta) — sits directly under the hero scores, the
-    /// Charge its band is gated on. Same translucent chrome as the hero card so it reads as part of the
-    /// sky scene, quiet by design.
+    /// One pull gesture, two zones (Hearth 8c reconciliation with the pre-existing #334 pull-to-sync).
+    /// The reveal zone (≥ `revealThreshold`) latches the 8c control slot open LIVE, the instant the
+    /// drag crosses it — waiting for release made the slot feel unresponsive/invisible on-device,
+    /// since a normal firm pull's momentum easily carried past a release-based check anyway. The deep
+    /// zone (≥ `pullThreshold`, with the vessel fading in as the cue + an arm haptic) is a distinct,
+    /// deliberately-further pull that fires the strap sync on release; it can fire whether or not the
+    /// slot is already open, since the two no longer compete for the same release moment. Scrolling
+    /// down past the top closes an open slot.
+    private func handlePull(_ y: CGFloat) {
+        pullY = max(0, y)
+        // Scrolling the content back down (past the top) dismisses the revealed slot — the
+        // "let go and they leave" half of the iOS hidden-search idiom the mockup cites.
+        if revealOpen, y < -30 {
+            withAnimation(.easeOut(duration: 0.25)) { revealOpen = false }
+        }
+        guard !refreshing else { return }
+        gestureMaxPull = max(gestureMaxPull, pullY)
+        if pullY >= revealThreshold, !revealOpen {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { revealOpen = true }
+            pullHaptic &+= 1
+        }
+        if pullY >= pullThreshold, !refreshArmed {
+            refreshArmed = true
+            pullHaptic &+= 1
+        }
+        if pullY < 6, gestureMaxPull > 0 {
+            gestureMaxPull = 0
+            if refreshArmed {
+                refreshArmed = false
+                refreshing = true
+                Task {
+                    // #334 (iOS twin of Android #426): a pull requests a fresh strap history offload, not just
+                    // a UI reload. syncNow() is internally gated (connected + bonded + not-already-backfilling),
+                    // so a pull while disconnected or mid-offload safely no-ops. The 7b sync line owns the
+                    // ongoing offload progress; the pull spinner stays short (the reload below).
+                    ble.syncNow()
+                    await repo.refresh()
+                    await load()
+                    try? await Task.sleep(nanoseconds: 350_000_000)   // let the fill read as "done"
+                    withAnimation(.easeOut(duration: 0.25)) { refreshing = false }
+                }
+            }
+        }
+    }
+
+    /// Dismiss the header menu, then run the picked action a beat later (matches the quick-action sheet's
+    /// own dismiss/re-present pattern) so the new sheet/state change doesn't race the menu's own dismissal.
+    private func selectMenuAction(_ action: @escaping () -> Void) {
+        showTodayMenu = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { action() }
+    }
+
+    // MARK: - Scene (sky title + controls + hero)
+
+    private var scene: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Hearth header (mockup 8): "three things and never grows" — menu, wordmark, strap battery,
+            // all on ONE row (the mockup's literal layout; the wordmark's `.frame(maxWidth: .infinity)`
+            // centres it between the two fixed-width ends). No day picker in the header — the day
+            // scrubber + calendar moved into the pull-revealed slot (8c, `revealedControls`), and the
+            // selected day's identity lives in the hero kicker's date line.
+            HStack(alignment: .center) {
+                Button { showTodayMenu = true } label: {
+                    Image(systemName: "line.3.horizontal")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(.white.opacity(0.16)))
+                }
+                .buttonStyle(LiquidPressStyle())
+                .accessibilityLabel("Menu: Settings, Customize Today, Devices")
+                LiquidWordmark()
+                LiquidStatusPill()
+            }
+            // Hearth 7b: the ambient sync status line, in the sky between the header and the ring
+            // rail — always present when there's something to say (syncing / live / transient "Up to
+            // date"), zero pixels otherwise. While the 8c slot is open the line renders THERE instead
+            // (the mockup's "same zone" rule), so it isn't shown twice.
+            if !revealOpen {
+                LiquidSyncLine(topPadding: 22)
+            }
+        }
+    }
+
+    /// One-tap Live Session start (silent guardian, beta) — the sky hero's single pill CTA, mockup's
+    /// "background: rgba(255,255,255,0.17); border-radius: 999; padding: 15; centered 15/600 white".
     private var liveSessionStartRow: some View {
         Button { showLiveSession = true } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "shield.lefthalf.filled")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(StrandPalette.metricCyan)
-                // Theme-aware session-start chrome (#1160 parity): NoopPanelSurface + normal text
-                // tokens — light ink on Dark, dark ink on Light. (Was pinned-dark + on-dark tokens.)
-                Text("Start session")
-                    .font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.textPrimary)
+            // Sky content, not a card — plain warm white on the gradient (mockup's literal pill spec),
+            // not a theme-aware NoopPanelSurface; the row now lives in the sky block, not the sheet.
+            HStack(spacing: 8) {
+                Text("Start a live session")
+                    .font(StrandFont.body.weight(.semibold))
+                    .foregroundStyle(.white)
                 Text("BETA")
-                    .font(StrandFont.overlineScaled(8.5)).tracking(1.2)
-                    .foregroundStyle(StrandPalette.textSecondary)
-                    .padding(.horizontal, 8).padding(.vertical, 2.5)
-                    .background(Capsule().fill(StrandPalette.surfaceInset.opacity(0.72))
-                        .overlay(Capsule().strokeBorder(
-                            StrandPalette.hairline,
-                            lineWidth: NoopMetrics.hairlineWidth
-                        )))
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(StrandPalette.textTertiary)
+                    .font(StrandFont.overlineScaled(9)).tracking(1.2)
+                    .foregroundStyle(.white.opacity(0.6))
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-            .background(NoopPanelSurface(cornerRadius: 18, surfaceOpacity: cardOpacity))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 15)
+            .background(Capsule().fill(.white.opacity(0.17)))
+            .contentShape(Capsule())
         }
         .buttonStyle(LiquidPressStyle())
         .accessibilityLabel("Start a live session. Beta. Silent strap coaching against today's Charge.")
@@ -590,50 +794,33 @@ struct LiquidTodayView: View {
         ]
     }
 
+    /// The Moment card — the mockup's sky hero. NOT a card at all: the ring rail, the kicker → serif
+    /// statement → body block, the (focused-only) white sparkline and the three stat cells all sit
+    /// DIRECTLY on the sky gradient, stacked at the mockup's 30px rhythm. The dark containing box the
+    /// previous iteration drew is gone — that box is exactly what made the hero read as "a widget on a
+    /// dark app" instead of a moment.
     private var heroCard: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 26) {
             scoreRail
-            // Focused state: below the rail, an honest per-metric read + a 14-day sparkline from the REAL
-            // banked series. Absent in the default view, so the unfocused hero reads exactly as before.
+            heroTextBlock
             if let focused = heroScores.first(where: { $0.key == focusedMetric }) {
-                heroFocusDetail(focused)
-                    .padding(.top, 14)
+                heroSparkBlock(focused)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
+            heroStatsRow
         }
-        .padding(.vertical, NoopMetrics.space4)
-        .padding(.horizontal, NoopMetrics.space3)
-        .background(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .fill(heroFill)
-                .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous)
-                    .strokeBorder(.white.opacity(0.11), lineWidth: 1))
-                .shadow(color: .black.opacity(0.6), radius: 30, y: 16)
-                .opacity(cardOpacity)
-        )
-        // One card-level provenance badge (names the sensors/imports behind the scores). Straddles the top
-        // border like before, now pinned to the card's trailing corner instead of the Rest ring — the rail
-        // can scroll, so a badge anchored to one cell would drift off with it.
-        .overlay(alignment: .topTrailing) {
-            if let sourceLabel = heroSourceLabel {
-                SourceBadge("\(sourceLabel)", tint: StrandPalette.onDarkSecondary)
-                    .fixedSize()
-                    .offset(x: -NoopMetrics.space3, y: -(NoopMetrics.sourceBadgeHeight / 2))
-                    .allowsHitTesting(false)
-                    .accessibilityLabel(Text("Source: \(sourceLabel)"))
-            }
-        }
+        .frame(maxWidth: .infinity, alignment: .leading)
         // A light tick when a ring focuses/unfocuses — the rail should feel physical like the day nav.
         .liquidSelectionHaptic(trigger: focusedMetric)
     }
 
     /// The horizontal ring rail: one `HeroScoreCell` per real score, individually tappable to focus.
-    /// A `ScrollView(.horizontal)` so it can scroll on a narrow width / large Dynamic Type; the inner row
-    /// takes a `minWidth` of the viewport so with the three rings that fit today it CENTRES (reads like the
-    /// old evenly-spread fixed row) rather than jamming to the leading edge.
+    /// A `ScrollView(.horizontal)` so it can scroll on a narrow width / large Dynamic Type. Leading-
+    /// aligned like the mockup's rail (which starts at the same left edge as the serif line below),
+    /// not centred — the hero is an editorial column, not a symmetric widget.
     private var scoreRail: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 14) {
+            HStack(spacing: 2) {
                 ForEach(heroScores) { s in
                     HeroScoreCell(label: s.label, score: s.score, tint: s.tint,
                                   animated: dataLoaded, focused: focusedMetric == s.key,
@@ -641,75 +828,146 @@ struct LiquidTodayView: View {
                                   maxValue: s.maxValue, decimals: s.decimals)
                 }
             }
-            .frame(minWidth: heroRailWidth, alignment: .center)
-            .padding(.horizontal, 2)
+            // Mockup's edge bleed (margin: 0 -24; padding: 0 24): the ScrollView itself spans the full
+            // screen width via the negative outer padding, while the content keeps the column's inset —
+            // an overflowing rail scrolls under the screen edge instead of clipping at the column.
+            .padding(.horizontal, 24)
+            // A stroked Circle's paint extends lineWidth/2 past its own nominal frame; a ScrollView
+            // sizes itself to the LAYOUT frame and clips to that size, so without this the rings' top
+            // edge loses a couple of points to the scroll view's own clip mask (visible on-device more
+            // than in the simulator). This headroom keeps the full stroke on-screen.
+            .padding(.top, 3)
         }
-        .background(GeometryReader { g in
-            Color.clear.preference(key: HeroRailWidthKey.self, value: g.size.width)
-        })
-        .onPreferenceChange(HeroRailWidthKey.self) { heroRailWidth = $0 }
+        .padding(.horizontal, -24)
+    }
+
+    /// Kicker → serif voice line → body, the mockup's hero text block. The serif line is the ONE
+    /// narrative sentence per screen; tapping a ring swaps it to speak about that score ("say the
+    /// number, then say what it means"). All copy is real, existing app copy — nothing invented.
+    private var heroTextBlock: some View {
+        let focused = heroScores.first(where: { $0.key == focusedMetric })
+        return VStack(alignment: .leading, spacing: 16) {
+            Text(heroKicker.uppercased())
+                .font(StrandFont.overlineScaled(10)).tracking(2.2)
+                .foregroundStyle(.white.opacity(0.6))
+                .lineLimit(1).minimumScaleFactor(0.8)
+            Text(heroVoiceLine(focused))
+                .font(StrandFont.voice(33, relativeTo: .largeTitle))
+                .tracking(-0.5)
+                .lineSpacing(3)
+                .foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(heroBodyLine(focused))
+                .font(StrandFont.body)
+                .lineSpacing(7)
+                .foregroundStyle(.white.opacity(0.78))
+                .fixedSize(horizontal: false, vertical: true)
+            if let focused {
+                Button { guideSection = focused.section } label: {
+                    HStack(spacing: 4) {
+                        Text("See how it is scored").font(StrandFont.subhead.weight(.semibold))
+                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).opacity(0.7)
+                    }
+                    .foregroundStyle(.white.opacity(0.9))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // (Re-tapping the focused ring clears the focus — the rail owns that gesture; the a11y hint
+        // on each ring cell says so.)
+        .id(focusedMetric ?? "now") // crossfade the block as one unit when focus changes
+    }
+
+    /// The kicker: date · charge state · provenance — the quiet facts line above the voice. The
+    /// provenance label (which sensors fed the scores) lives here now that there is no card corner
+    /// to badge.
+    private var heroKicker: String {
+        var parts = [dateLine]
+        let state = chargeDisplay.stateLabel
+        if !state.isEmpty { parts.append(state) }
+        if let src = heroSourceLabel { parts.append(src) }
+        return parts.joined(separator: "  ·  ")
+    }
+
+    /// The serif statement. Unfocused: the readiness one-liner (the same real sentence the Synthesis
+    /// card holds). Focused: the score, said plainly — "Rest 97 of 100."
+    private func heroVoiceLine(_ focused: HeroScore?) -> String {
+        guard let s = focused else { return chargeDisplay.calibrationDetail ?? synthLine }
+        guard s.score != nil else { return String(localized: "\(s.label): no data yet.") }
+        return "\(s.label) \(heroValueText(s)) of \(Int(s.maxValue))."
+    }
+
+    /// The body under the voice: unfocused, the readiness engine's fuller summary; focused, the
+    /// honest per-score read (identical copy to the previous focus detail).
+    private func heroBodyLine(_ focused: HeroScore?) -> String {
+        guard let s = focused else { return readiness.summary }
+        return heroFocusRead(s)
+    }
+
+    private func heroValueText(_ s: HeroScore) -> String {
+        guard let v = s.score else { return "–" }
+        return s.decimals > 0 ? String(format: "%.\(s.decimals)f", v) : String(Int(v.rounded()))
+    }
+
+    /// Focused-only: the mockup's quiet white polyline over the sky + a micro-label. Same REAL
+    /// 14-day banked series as before; the tinted, area-filled chart chrome is gone — on the sky the
+    /// trend is a whisper, not a chart.
+    private func heroSparkBlock(_ s: HeroScore) -> some View {
+        let values = heroFocusSpark(s)
+        return VStack(alignment: .leading, spacing: 8) {
+            if values.count > 1 {
+                Sparkline(values: values,
+                          gradient: Gradient(colors: [.white.opacity(0.75), .white.opacity(0.75)]),
+                          lineWidth: 1.5, showsArea: false, showsHead: false, showsHover: false)
+                    .frame(height: 30)
+                Text("Past 14 days")
+                    .font(StrandFont.overlineScaled(10)).tracking(1.4).textCase(.uppercase)
+                    .foregroundStyle(.white.opacity(0.5))
+            } else {
+                Text("Not enough history yet for a trend.")
+                    .font(StrandFont.caption).foregroundStyle(.white.opacity(0.6))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The stat cells under the voice (mockup: value 20/light, key 10/caps). REAL carried vitals —
+    /// the same per-field today-first carry the Recovery-vitals card reads; "–" when absent. Strain
+    /// always reads on the classic WHOOP 0–21 scale here regardless of the user's chosen Effort
+    /// display preference (`effortScale`) — "Strain" as a label specifically names that scale, unlike
+    /// the Effort ring above, which honours whichever scale the user picked (#268). Strain does NOT
+    /// carry from a prior day (unlike Charge): it's today's own accumulation, so yesterday's number
+    /// would be a false statement, not a stale one — same rule the Effort ring already follows.
+    private var heroStatsRow: some View {
+        let hrv = displayDay?.avgHrv ?? vitalsDay?.avgHrv
+        let rhr = (displayDay?.restingHr ?? vitalsDay?.restingHr).map(Double.init)
+        return HStack(alignment: .top, spacing: 22) {
+            heroStat(unitText(hrv, "ms"), String(localized: "HRV"))
+            heroStat(unitText(rhr, "bpm"), String(localized: "Rest HR"))
+            heroStat(displayDay?.strain.map { UnitFormatter.effortDisplay($0, scale: .whoop) } ?? "–", String(localized: "Strain"))
+            heroStat(sleepText, String(localized: "Sleep"))
+        }
+    }
+
+    private func heroStat(_ value: String, _ key: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(value)
+                // Mockup hero stat cell value: 20px weight 300 (Light) — a genuine 300 now that the
+                // static is bundled, matching the ring/big-number thin voice.
+                .font(StrandFont.number(20, weight: .light))
+                .foregroundStyle(.white)
+            Text(key.uppercased())
+                .font(StrandFont.overlineScaled(10)).tracking(1.0)
+                .foregroundStyle(.white.opacity(0.55))
+        }
+        .accessibilityElement(children: .combine)
     }
 
     private func toggleHeroFocus(_ key: String) {
         withAnimation(.easeInOut(duration: 0.22)) {
             focusedMetric = (focusedMetric == key) ? nil : key
         }
-    }
-
-    /// The focused-ring detail shown under the rail: the live value, a 14-day sparkline from the REAL
-    /// `kSparks` series, an honest per-metric read, and both a "See how it is scored" route and a "Back to
-    /// now" affordance that clears the focus.
-    private func heroFocusDetail(_ s: HeroScore) -> some View {
-        let values = heroFocusSpark(s)
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(s.section.displayName.uppercased())
-                    .font(StrandFont.overline).tracking(1.6)
-                    .foregroundStyle(StrandPalette.onDarkSecondary)
-                if let score = s.score {
-                    Text(s.decimals > 0 ? String(format: "%.\(s.decimals)f", score) : String(Int(score.rounded())))
-                        .font(StrandFont.rounded(19)).foregroundStyle(StrandPalette.onDarkPrimary)
-                }
-                Spacer(minLength: 8)
-                Button { toggleHeroFocus(s.key) } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.uturn.backward").font(.system(size: 9, weight: .semibold))
-                        Text("Back to now").font(StrandFont.caption)
-                    }
-                    .foregroundStyle(StrandPalette.onDarkSecondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Back to now. Closes the \(s.section.displayName) trend.")
-            }
-            // The 14-day trend, sourced from the SAME banked series the Key Metrics graphs read — no new
-            // data path, no placeholder. Needs at least two points to draw a line; otherwise say so plainly.
-            if values.count > 1 {
-                Sparkline(values: values,
-                          gradient: Gradient(colors: [s.tint.opacity(0.55), s.tint]),
-                          showsHover: false,
-                          valueFormat: { s.decimals > 0 ? String(format: "%.\(s.decimals)f", $0) : String(Int($0.rounded())) })
-                    .frame(height: 46)
-                Text("Past 14 days").font(StrandFont.caption).foregroundStyle(StrandPalette.onDarkTertiary)
-            } else {
-                Text("Not enough history yet for a trend.")
-                    .font(StrandFont.caption).foregroundStyle(StrandPalette.onDarkTertiary)
-            }
-            // What the score means right now — reused real copy, never an invented claim. Charge uses the
-            // live readiness one-liner (the same text the Synthesis card shows); Effort/Rest use the scoring
-            // guide's own per-score headline. See `heroFocusRead`.
-            Text(heroFocusRead(s))
-                .font(StrandFont.footnote).foregroundStyle(StrandPalette.onDarkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button { guideSection = s.section } label: {
-                HStack(spacing: 3) {
-                    Text("See how it is scored").font(StrandFont.caption.weight(.semibold))
-                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).opacity(0.7)
-                }
-                .foregroundStyle(s.tint)
-            }
-            .buttonStyle(.plain)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// The focused metric's 14-day values, oldest → newest, from the REAL banked `kSparks` series. Effort
@@ -774,9 +1032,12 @@ struct LiquidTodayView: View {
             // Data-driven off the SAME @AppStorage the CUSTOMISE editor writes, so add / remove /
             // reorder in Customise reflects on the home screen live. The hydration filter mirrors classic
             // TodayView's `enabledDashboardCards` and Android's `it != HYDRATION || hydrationEnabled`.
-            ForEach(DashboardCardPrefs.decodeEnabled(dashboardCardsRaw)
-                        .filter { hydrationEnabled || $0 != .hydration }) { card in
-                liquidCard(for: card)
+            // One divided GroupCard (the mockup's list workhorse), not a stack of separate chips.
+            GroupCard {
+                ForEach(DashboardCardPrefs.decodeEnabled(dashboardCardsRaw)
+                            .filter { hydrationEnabled || $0 != .hydration }) { card in
+                    liquidCard(for: card)
+                }
             }
         }
     }
@@ -851,26 +1112,18 @@ struct LiquidTodayView: View {
 
     /// One card row pushing its `TabRoute` by value — the first hop off the Today root must ride
     /// the tab's `NavigationPath` so a re-tap of the Today tab can pop it (#198; see TabRoute.swift).
+    /// Rendered as a `GroupRow` (ring swatch → title/subtitle → value → chevron) inside the section's
+    /// one `GroupCard` — the mockup's divided-list anatomy, replacing the old per-row chip cards whose
+    /// dark liquid vessels read as mud on the cream sheet. `frac` is retained by the callers but the
+    /// row no longer draws a fill gauge — the value + swatch carry it.
     private func cardLink(_ route: TabRoute, title: String, sub: String,
                           value: String, tint: Color, frac: Double?) -> some View {
         NavigationLink(value: route) {
-            HStack(spacing: 12) {
-                LiquidVessel(value: frac, tint: tint, animated: false).frame(width: 30, height: 30)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title.uppercased()).font(StrandFont.overlineScaled(11)).tracking(1.0)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                    Text(sub).font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
-                }
-                Spacer(minLength: 8)
-                Text(value).font(StrandFont.number(17)).foregroundStyle(StrandPalette.textPrimary)
-                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(StrandPalette.textTertiary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-            .background(NoopPanelSurface(tint: tint, cornerRadius: 20, surfaceOpacity: cardOpacity))
+            GroupRow(leading: .swatch(tint), title: LocalizedStringKey(title),
+                     subtitle: LocalizedStringKey(sub), value: value.isEmpty ? nil : value,
+                     showsChevron: true)
         }
-        .buttonStyle(LiquidPressStyle())
+        .buttonStyle(.plain)
     }
 
     // MARK: - Synthesis (greeting + readiness pills + one-liner)
@@ -886,13 +1139,13 @@ struct LiquidTodayView: View {
     private var synthesisSection: some View {
         VStack(spacing: 8) {
             HStack {
-                Text(greeting).font(StrandFont.rounded(19)).foregroundStyle(StrandPalette.textPrimary)
+                Text(greeting).font(StrandFont.rounded(19, weight: .medium)).foregroundStyle(StrandPalette.textPrimary)
                     .lineLimit(1).minimumScaleFactor(0.6)   // yield to the pills rather than push them to wrap
                 Spacer(minLength: 8)
                 HStack(spacing: 8) {
                     if let word = readinessWord {
                         Text(word)
-                            .font(StrandFont.caption.weight(.bold))
+                            .font(StrandFont.caption.weight(.semibold))
                             .foregroundStyle(StrandPalette.chargeColor)
                             .padding(.horizontal, 13)
                             .padding(.vertical, 6)
@@ -902,7 +1155,7 @@ struct LiquidTodayView: View {
                     HStack(spacing: 5) {
                         Circle().fill(StrandPalette.chargeColor).frame(width: 6, height: 6)
                         Text(chargeDisplay.stateLabel)
-                            .font(StrandFont.caption.weight(.bold))
+                            .font(StrandFont.caption.weight(.semibold))
                             .foregroundStyle(StrandPalette.chargeColor)
                     }
                     .padding(.horizontal, 12)
@@ -914,12 +1167,14 @@ struct LiquidTodayView: View {
             .padding(.horizontal, 2)
             .padding(.top, 4)
 
+            // The mockup's sage Insight card — "the only place the app draws a conclusion" — which is
+            // exactly what Synthesis is. Solid sage wash, no shadow (tinted cards drop elevation).
             Button { withAnimation(.easeInOut(duration: 0.2)) { synthesisExpanded.toggle() } } label: {
-                card {
+                ConclusionCard {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("SYNTHESIS").font(StrandFont.overline).tracking(1.6)
-                                .foregroundStyle(StrandPalette.textSecondary)
+                            Text("SYNTHESIS").font(StrandFont.overlineScaled(10)).tracking(2.0)
+                                .foregroundStyle(StrandPalette.accentHover)
                             Spacer()
                             Text(synthesisExpanded ? "hide" : "show").font(StrandFont.caption)
                                 .foregroundStyle(StrandPalette.textTertiary)
@@ -986,11 +1241,13 @@ struct LiquidTodayView: View {
     }
 
     private func vitalRow(_ label: String, _ value: String, _ tint: Color, _ frac: Double?) -> some View {
+        // Ring swatch, not a filled vessel — the mockup's row glyph on a light card (the dark liquid
+        // vessel was designed for the old sky-backed chips and read as a mud blob on warm paper).
         HStack(spacing: 12) {
-            LiquidVessel(value: frac, tint: tint, animated: false).frame(width: 26, height: 26)
+            Circle().strokeBorder(tint, lineWidth: 2).frame(width: 26, height: 26)
             Text(label).font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
             Spacer()
-            Text(value).font(StrandFont.number(15)).foregroundStyle(StrandPalette.textPrimary)
+            Text(value).font(StrandFont.number(15, weight: .medium)).foregroundStyle(StrandPalette.textPrimary)
         }
     }
 
@@ -1118,22 +1375,21 @@ struct LiquidTodayView: View {
 
     private func ktile(_ label: String, icon: String, _ value: String, _ unit: String, _ tint: Color, _ frac: Double?,
                        key: String? = nil, detailMetric: MetricDescriptor? = nil) -> some View {
-        let tile = VStack(alignment: .leading, spacing: 10) {
+        let tile = VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(tint.opacity(0.72))
-                    .frame(width: 14)
+                    .frame(width: 13)
                 Text(label.uppercased())
-                    .font(StrandFont.overlineScaled(10))
-                    .tracking(1.0)
+                    .font(StrandFont.overlineScaled(9))
+                    .tracking(1.2)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
             }
-            (Text(value).font(StrandFont.number(24))
-                + Text(unit.isEmpty ? "" : (unit == "%" ? unit : " \(unit)"))
-                    .font(StrandFont.number(24)))
+            (Text(value).font(StrandFont.number(17, weight: .medium))
+                + Text(unit.isEmpty ? "" : " \(unit)").font(StrandFont.caption))
                 .foregroundStyle(StrandPalette.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
@@ -1156,11 +1412,16 @@ struct LiquidTodayView: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(minHeight: keyMetricsDetailed ? 154 : 116, alignment: .topLeading)
-        .background(NoopPanelSurface(tint: tint, cornerRadius: 18, surfaceOpacity: cardOpacity))
+        .background(
+            RoundedRectangle(cornerRadius: NoopMetrics.chipRadius, style: .continuous)
+                .fill(StrandPalette.surfaceRaised)
+                .shadow(color: StrandPalette.cardShadowColor.opacity(0.04), radius: 1, x: 0, y: 1)
+                .shadow(color: StrandPalette.cardShadowColor.opacity(0.04), radius: 8, x: 0, y: 6)
+                .opacity(cardOpacity)
+        )
         // #430 parity: tap -> the metric's trend detail (the same Explore dossier its MetricRow pushes,
         // closure-based NavigationLink per #38). A metric with no catalog entry stays inert.
         return Group {
@@ -1191,6 +1452,10 @@ struct LiquidTodayView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+            // The mockup's ink "Action" card for the manual-workout entry, which had no Today-visible
+            // trigger before (only the Workouts screen's "Add workout" pill). Its own leaf, so the
+            // sheet state and the Repository/AppModel observation it needs stay out of this view.
+            ManualWorkoutEntryCard()
         }
     }
 
@@ -1243,19 +1508,30 @@ struct LiquidTodayView: View {
 
     private func sectionHead(_ title: String, trailing: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(LocalizedStringKey(title)).font(StrandFont.overline).tracking(1.6).foregroundStyle(StrandPalette.textTertiary)
+            // Mockup overline: 10px / 0.2em / bold — a smaller, wider whisper than the old 11/1.6.
+            Text(LocalizedStringKey(title)).font(StrandFont.overlineScaled(10)).tracking(2.0)
+                .foregroundStyle(StrandPalette.textTertiary)
             Spacer()
             Text(LocalizedStringKey(trailing)).font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
         }
-        .padding(.horizontal, 2)
-        .padding(.top, 4)
+        .padding(.horizontal, 4)
+        .padding(.top, 6)
     }
 
+    /// The mockup's card recipe: warm-white fill, radius 26, the two-layer resting shadow — and NO
+    /// hairline border (the shadow carries the edge on the cream sheet; a border read as "outlined
+    /// admin UI", not paper).
     private func card<V: View>(@ViewBuilder _ content: () -> V) -> some View {
         content()
-            .padding(16)
+            .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(NoopPanelSurface(cornerRadius: 22, surfaceOpacity: cardOpacity))
+            .background(
+                RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous)
+                    .fill(StrandPalette.surfaceRaised)
+                    .shadow(color: StrandPalette.cardShadowColor.opacity(0.04), radius: 1, x: 0, y: 1)
+                    .shadow(color: StrandPalette.cardShadowColor.opacity(0.045), radius: 12, x: 0, y: 10)
+                    .opacity(cardOpacity)
+            )
     }
 
     // MARK: - Data
@@ -1528,6 +1804,11 @@ struct LiquidTodayView: View {
     private var caloriesDetailSource: String { caloriesDetailMetric?.source ?? "my-whoop" }
 
     private var liveHour: Double {
+        // DEBUG screenshot harness: `--demo-hour` pins the sky along with the classic scene, so a
+        // sweep across the day captures every gradient. No-op without the launch arg (active == nil).
+        #if DEBUG
+        if DemoDayHarness.active != nil, let pinned = DemoDayHarness.skyHour { return pinned }
+        #endif
         let c = Calendar.current.dateComponents([.hour, .minute], from: Date())
         return Double(c.hour ?? 0) + Double(c.minute ?? 0) / 60
     }
@@ -1614,14 +1895,14 @@ private struct PullOffsetKey: PreferenceKey {
 
 /// The subtle NOOP wordmark. Built as a row of letters (not `Text(...).tracking()`, which adds a
 /// trailing gap after the last glyph and pushes the word off-centre), so it sits DEAD centre. Tap it
-/// for a little easter egg: it plays one of several random one-shot animations — wiggle, shake, flip,
-/// spin, bounce, or a jelly squash — with a light haptic.
+/// for a little easter egg: it plays one of several random one-shot animations — wiggle, shake,
+/// bounce, or a jelly squash — with a light haptic. (No full-rotation eggs — a spin doesn't fit the
+/// mockup's quiet chrome.)
 private struct LiquidWordmark: View {
-    @State private var rot = 0.0      // z-rotation (wiggle / spin)
+    @State private var rot = 0.0      // z-rotation (wiggle)
     @State private var scaleX = 1.0   // horizontal scale (jelly squash)
     @State private var scaleY = 1.0   // vertical scale (bounce / jelly)
     @State private var dx = 0.0       // horizontal offset (shake)
-    @State private var flip = 0.0     // y-axis 3D flip
     @State private var token = 0      // drives the tap haptic
 
     var body: some View {
@@ -1636,7 +1917,6 @@ private struct LiquidWordmark: View {
         .rotationEffect(.degrees(rot))
         .scaleEffect(x: scaleX, y: scaleY)
         .offset(x: dx)
-        .rotation3DEffect(.degrees(flip), axis: (x: 0, y: 1, z: 0), perspective: 0.5)
         .contentShape(Rectangle())
         .onTapGesture { playRandomEgg() }
         .liquidTapHaptic(trigger: token)
@@ -1646,21 +1926,18 @@ private struct LiquidWordmark: View {
 
     /// The easter egg: one of several one-shot animations at random. The oscillating ones (wiggle/shake/
     /// squash) kick the value to an extreme then let an under-damped spring settle it back through zero,
-    /// which reads as a natural wobble without hand-authored keyframes.
+    /// which reads as a natural wobble without hand-authored keyframes. The two full-rotation eggs
+    /// (flip, spin) were dropped — they read as spinning, which doesn't fit the mockup's quiet chrome.
     private func playRandomEgg() {
         token &+= 1
-        switch Int.random(in: 0..<6) {
+        switch Int.random(in: 0..<4) {
         case 0: // wiggle
             rot = -14
             withAnimation(.spring(response: 0.5, dampingFraction: 0.28)) { rot = 0 }
         case 1: // shake
             dx = -12
             withAnimation(.spring(response: 0.45, dampingFraction: 0.26)) { dx = 0 }
-        case 2: // flip
-            withAnimation(.easeInOut(duration: 0.6)) { flip += 360 }
-        case 3: // spin
-            withAnimation(.easeInOut(duration: 0.55)) { rot += 360 }
-        case 4: // bounce
+        case 2: // bounce
             scaleX = 1.28; scaleY = 1.28
             withAnimation(.spring(response: 0.5, dampingFraction: 0.42)) { scaleX = 1; scaleY = 1 }
         default: // jelly (squash + stretch)
@@ -1683,7 +1960,7 @@ private struct LiquidWordmark: View {
 private struct HeroScoreCell: View {
     /// The ring diameter (mockup's thin hero arc) and the cell's fixed rail width.
     static let ringDiameter: CGFloat = 62
-    static let cellWidth: CGFloat = 76
+    static let cellWidth: CGFloat = 74
 
     let label: String
     let score: Double?            // on whatever scale the caller passes (nil = no data yet)
@@ -1704,43 +1981,44 @@ private struct HeroScoreCell: View {
 
     var body: some View {
         Button(action: onTap) {
-            VStack(spacing: 7) {
+            VStack(spacing: 10) {
                 ZStack {
-                    // Default: white-on-dark ring (unchanged look). Focused: tint the fill to the score's
-                    // colour as a clear selection cue — a colour change only, not a fabricated value.
-                    HearthProgressRing(fraction: frac,
-                                       fillColor: focused ? tint : Color.white.opacity(0.92),
-                                       animated: animated)
+                    // The mockup ring: 2px translucent-white track + white arc, no tint, no glow.
+                    HearthProgressRing(fraction: frac, lineWidth: 2, animated: animated)
                         .frame(width: Self.ringDiameter, height: Self.ringDiameter)
+                    // Selected: a solid warm-white disc covers the ring and the value flips to ink —
+                    // the mockup's selection cue (no highlight box, no tinted arc).
+                    if focused {
+                        Circle().fill(.white.opacity(0.92))
+                            .frame(width: Self.ringDiameter, height: Self.ringDiameter)
+                            .transition(.opacity)
+                    }
                     Group {
+                        // Mockup ring value: weight 300 (Light) unselected, weight 400 (Regular) when
+                        // selected (the numeral firms up as it flips to ink on the warm-white disc).
+                        // Light is now a genuinely-bundled static, so this is a real 300, not a floor.
+                        let ringWeight: Font.Weight = focused ? .regular : .light
                         if score != nil {
-                            CountUpNumber(value: shown, font: StrandFont.rounded(20), decimals: decimals)
+                            CountUpNumber(value: shown,
+                                          font: StrandFont.number(22, weight: ringWeight),
+                                          decimals: decimals)
                         } else {
-                            Text("–").font(StrandFont.rounded(20))
+                            Text("–").font(StrandFont.number(22, weight: ringWeight))
                         }
                     }
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
+                    .foregroundStyle(focused ? StrandPalette.textPrimary : Color.white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                     .allowsHitTesting(false)
                 }
-                HStack(spacing: 3) {
-                    // #74: one line, shrink-to-fit rather than wrap under large Dynamic Type so
-                    // CHARGE/EFFORT/REST never grow the hero card to two lines.
-                    Text(label.uppercased()).font(StrandFont.overlineScaled(10)).tracking(1.2)
-                        .lineLimit(1).minimumScaleFactor(0.7)
-                }
-                // The hero card fill is pinned dark in BOTH themes, so the label uses the scheme-invariant
-                // on-dark token (#1013); the focused label brightens to primary.
-                .foregroundStyle(focused ? StrandPalette.onDarkPrimary : StrandPalette.onDarkSecondary)
+                // Sentence-case label, mockup's 11px white 78% — no caps, no tracking: the rail reads
+                // quiet, the numbers carry the weight.
+                Text(label)
+                    .font(StrandFont.footnote)
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .foregroundStyle(.white.opacity(focused ? 1 : 0.78))
             }
             .frame(width: Self.cellWidth)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(.white.opacity(focused ? 0.10 : 0))
-            )
             .contentShape(Rectangle())
         }
         .buttonStyle(LiquidPressStyle())
@@ -1757,101 +2035,61 @@ private struct HeroScoreCell: View {
     }
 }
 
-/// Captures the hero rail's viewport width so the three-ring row can centre when it fits yet still scroll
-/// when it overflows (see `scoreRail`).
-private struct HeroRailWidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
-}
 
 
 // MARK: - Scene controls (LiveState-isolated leaves)
 
-/// The liquid pull-to-refresh vessel + a "Syncing…" label. Owns LiveState (isolated leaf, per the file's
-/// convention — see `LiquidLiveHR`) so a live-HR notify doesn't re-render the whole Today, but the vessel
-/// still knows about an ONGOING strap backfill.
-///
-/// Visibility used to be driven only by the local `refreshing` flag, which flips false ~350ms after the
-/// pull releases (once the local repo reload + a short "let the fill read as done" delay complete) — but
-/// `ble.syncNow()` kicks off a real BLE history offload that can run far longer than that. The vessel was
-/// disappearing while the strap was still mid-sync, with no feedback beyond the easy-to-miss header
-/// `SyncStatusChip`. `syncing` now also holds it (and the label) up while `live.backfilling` is true, so
-/// releasing the pull and watching it go away actually means the sync finished.
-private struct LiquidRefreshIndicator: View {
+/// The pull GAP's visual response (Hearth 8c). Two zones on one pull: the shallow zone fades in the
+/// revealed row itself (the SAME `revealedControls` end state, at pull-driven opacity — "revealing
+/// the endstate", per on-device feedback, not a separate placeholder that gets swapped out at the
+/// threshold), the deep zone brings up the refresh vessel — the cue that letting go now fires the
+/// #334 strap sync. While the refresh runs, a short slosh; the ONGOING offload's feedback is the 7b
+/// sync line in the sky (this vessel used to hold itself up through `live.backfilling` — that
+/// ambient job moved to `LiquidSyncLine`, which says more, in the mockup's own place for it, so
+/// this leaf no longer reads LiveState at all).
+private struct LiquidPullGapIndicator: View {
     let pullY: CGFloat
     let pullThreshold: CGFloat
+    let revealThreshold: CGFloat
     let refreshing: Bool
+    let revealOpen: Bool
     let liquidHeart: Color
-
-    @EnvironmentObject private var live: LiveState
+    let preview: AnyView
 
     private var progress: CGFloat { min(1, max(0, pullY / pullThreshold)) }
-
-    /// The RAW "a sync is happening" signal. `live.backfilling` toggles false→true between EVERY offload
-    /// chunk (`exitBackfilling` at each HISTORY_END → auto-continue re-kick → `beginBackfill`), with a real
-    /// BLE round-trip gap in between. A deep backlog is now up to ~24 chunks in ONE connection (#594 raised
-    /// the auto-continue cap 6→24), so binding the vessel straight to this strobes it in/out on every chunk
-    /// boundary. The MenuBar header pins a constant height for exactly this reason (see MenuBarContent).
-    private var syncingRaw: Bool { refreshing || live.backfilling }
-
-    /// Debounced visibility that drives the body: goes true INSTANTLY, but only goes false after riding out
-    /// [hideDelay] with no new chunk — so a brief per-chunk `backfilling` gap can't flicker the vessel.
-    @State private var syncing = false
-    @State private var hideTask: Task<Void, Never>?
-    private static let hideDelaySeconds: UInt64 = 3   // comfortably longer than an inter-chunk gap
+    /// The reveal's continuous progress (~10pt → `revealThreshold`), reaching exactly 1.0 at the
+    /// latch point — so the moment `revealOpen` inserts the interactive row in this same top-aligned
+    /// position, the gap's copy is already at full opacity/scale and the handoff is pixel-identical.
+    private var revealProgress: CGFloat {
+        min(1, max(0, (pullY - 10) / max(1, revealThreshold - 10)))
+    }
+    private var vesselOpacity: Double {
+        refreshing ? 1 : Double(max(0, (pullY - (pullThreshold - 40)) / 40))
+    }
 
     var body: some View {
         ZStack {
-            if syncing {
-                VStack(spacing: 6) {
-                    LiquidVessel(value: 0.6, tint: liquidHeart, animated: true)
-                        .frame(width: 34, height: 34)
-                    Text("Syncing…")
-                        .font(StrandFont.caption)
-                        .foregroundStyle(StrandPalette.textSecondary)
-                }
+            if refreshing {
+                LiquidVessel(value: 0.6, tint: liquidHeart, animated: true)
+                    .frame(width: 34, height: 34)
             } else if pullY > 2 {
+                // Once latched, the interactive copy renders ABOVE this gap (`pullRevealSlot`) and
+                // the gap's copy leaves the hierarchy entirely — never two instances at once.
+                if !revealOpen {
+                    preview
+                        .opacity(revealProgress)
+                        .scaleEffect(0.94 + 0.06 * revealProgress, anchor: .top)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                }
                 LiquidVessel(value: progress, tint: liquidHeart, animated: false)
                     .frame(width: 30, height: 30)
-                    .opacity(progress)
+                    .opacity(vesselOpacity)
                     .scaleEffect(0.7 + 0.3 * progress)
             }
         }
         .frame(maxWidth: .infinity)
-        .frame(height: syncing ? 64 : min(pullY, pullThreshold * 1.15))
-        .animation(.easeOut(duration: 0.22), value: syncing)
-        .onAppear { syncing = syncingRaw }
-        .onChangeCompat(of: syncingRaw) { raw in
-            hideTask?.cancel()
-            if raw {
-                syncing = true                       // a sync (or pull) is active — show at once
-            } else {
-                // Might just be the gap between two chunks — wait it out; a new chunk cancels this.
-                hideTask = Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: Self.hideDelaySeconds * 1_000_000_000)
-                    if !Task.isCancelled { syncing = false }
-                }
-            }
-        }
-    }
-}
-
-/// The uniform diameter of the round Today-header controls — profile avatar, quick-add (+), strap battery
-/// ring and Customize — so they sit level in the liquid cluster. Single source of truth (mirrors the
-/// Android `HeaderClusterControl`); the syncing vessel is a separate affordance and keeps its own size.
-private let headerClusterControl: CGFloat = 36
-
-private struct LiquidAddButton: View {
-    @EnvironmentObject var router: NavRouter
-    var body: some View {
-        Button { router.requestQuickActions() } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(StrandPalette.textPrimary)
-                .frame(width: headerClusterControl, height: headerClusterControl)
-        }
-        .nativeLiquidGlassHeaderButton()
-        .accessibilityLabel("Quick actions")
+        .frame(height: refreshing ? 64 : min(pullY, pullThreshold * 1.15))
+        .animation(.easeOut(duration: 0.22), value: refreshing)
     }
 }
 
@@ -2138,47 +2376,46 @@ extension LiquidTodayView {
     }
 }
 
-/// Strap-battery ring. Owns LiveState. Tap → Devices.
-private struct LiquidBatteryButton: View {
+/// The header's consolidated strap status: a connection dot + battery reading in one pill (Hearth
+/// header cleanup — the mockup's own header carries exactly one status pill, not a separate sync chip
+/// AND a separate battery ring). Tap → Devices, matching the old battery button's shortcut. The sync
+/// chip's own detail (syncing / "synced Xh ago") moved into the header menu's Devices row subtitle
+/// (`TodayMenuSheet`) rather than disappearing — `LiquidSyncStatusRow` below (Data Sources card) still
+/// carries the fullest detail, unchanged.
+private struct LiquidStatusPill: View {
     @EnvironmentObject var live: LiveState
     @EnvironmentObject var router: NavRouter
     private var display: LiquidTodayView.StrapBatteryDisplay {
         .resolve(connected: live.connected, batteryPct: live.batteryPct, charging: live.charging)
     }
+    private var dotColor: Color {
+        live.connected ? StrandPalette.chargeColor : StrandPalette.onDarkTertiary
+    }
     var body: some View {
         Button { router.openDevices() } label: {
-            ZStack {
+            HStack(spacing: 6) {
+                Circle().fill(dotColor).frame(width: 6, height: 6)
                 switch display {
                 case .charge(let pct, let charging):
-                    Circle()
-                        .trim(from: 0, to: max(0.02, min(1, pct / 100)))
-                        .stroke(ringColor(pct), style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                        .padding(2.5)
-                    Text("\(Int(pct.rounded()))")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(StrandPalette.textPrimary)
+                    Text("\(Int(pct.rounded()))%")
+                        .font(.system(size: 12.5, weight: .semibold))
                     if charging {
-                        // #972: the default Today never surfaced charging state — only the % ring. A small
-                        // bolt over the ring gives the same signal as the "· Charging" text on Mac/Android.
-                        Image(systemName: "bolt.fill")
-                            .font(.system(size: 7, weight: .bold))
-                            .foregroundStyle(StrandPalette.chargeColor)
-                            .offset(y: -10)
+                        // #972: the default Today never surfaced charging state — only the %.
+                        Image(systemName: "bolt.fill").font(.system(size: 9, weight: .bold))
                     }
                 case .pending(let charging):
                     // Connected, no % yet. If the BATTERY_LEVEL event has told us we're charging, SAY so —
                     // that is the one thing we actually know, and it is the wearer's live question.
                     Image(systemName: charging ? "bolt.fill" : "ellipsis")
                         .font(.system(size: charging ? 11 : 9, weight: .bold))
-                        .foregroundStyle(charging ? StrandPalette.chargeColor : StrandPalette.textTertiary)
                 case .offline:
-                    Image(systemName: "bolt.slash")
-                        .font(.system(size: 11))
-                        .foregroundStyle(StrandPalette.textTertiary)
+                    Image(systemName: "bolt.slash").font(.system(size: 11))
                 }
             }
-            .frame(width: headerClusterControl, height: headerClusterControl)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(Capsule().fill(.white.opacity(0.16)))
         }
         .nativeLiquidGlassHeaderButton()
         .accessibilityLabel(batteryAccessibility)
@@ -2187,20 +2424,17 @@ private struct LiquidBatteryButton: View {
     private var batteryAccessibility: String {
         switch display {
         case .offline:
-            return String(localized: "Strap battery, strap not connected")
+            return String(localized: "Strap not connected")
         case .pending(let charging):
             return charging
-                ? String(localized: "Strap battery charging, no reading yet")
-                : String(localized: "Strap battery, no reading yet")
+                ? String(localized: "Strap connected, charging, no battery reading yet")
+                : String(localized: "Strap connected, no battery reading yet")
         case .charge(let pct, let charging):
             let n = Int(pct.rounded())
             return charging
                 ? String(localized: "Strap battery \(n) percent, charging")
                 : String(localized: "Strap battery \(n) percent")
         }
-    }
-    private func ringColor(_ p: Double) -> Color {
-        p < 15 ? StrandPalette.statusCritical : p < 35 ? StrandPalette.statusWarning : StrandPalette.chargeColor
     }
 }
 
@@ -2227,6 +2461,59 @@ private extension View {
     }
 }
 
+/// The header's consolidated menu (Hearth cleanup): Devices, Customize Today, Settings — folded into
+/// one sheet behind the header's hamburger icon, replacing three separate always-visible icons (the
+/// profile avatar, the slider icon, and the tap targets the old battery/sync icons doubled as). The
+/// Devices row's subtitle carries the same sync-status read the old `LiquidSyncChip` showed ambiently
+/// in the header, so that signal is a tap away rather than gone (see `LiquidStatusPill`'s doc comment).
+private struct TodayMenuSheet: View {
+    @EnvironmentObject var live: LiveState
+    let onDevices: () -> Void
+    let onCustomize: () -> Void
+    let onSettings: () -> Void
+
+    private var devicesSubtitle: LocalizedStringKey? {
+        switch SyncChipState.resolve(live: live) {
+        case .syncing(let chunks): return LocalizedStringKey("Syncing… \(chunks) chunks")
+        case .synced(let ago): return LocalizedStringKey("Synced \(ago) ago")
+        case .experimentalLive: return "Connected"
+        case .hidden: return nil
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Capsule()
+                .fill(StrandPalette.hairlineStrong)
+                .frame(width: 36, height: 4)
+                .padding(.top, 10)
+                .padding(.bottom, 18)
+
+            GroupCard {
+                menuRow("Devices", subtitle: devicesSubtitle,
+                        icon: "antenna.radiowaves.left.and.right", action: onDevices)
+                menuRow("Customize Today", icon: "slider.horizontal.3", action: onCustomize)
+                menuRow("Settings", icon: "gearshape.fill", action: onSettings)
+            }
+            .padding(.horizontal, 16)
+        }
+        .padding(.bottom, 20)
+        .frame(maxWidth: .infinity, alignment: .top)
+        .background(StrandPalette.surfaceOverlay.ignoresSafeArea())
+        .presentationDetents([.height(260)])
+        .presentationDragIndicator(.hidden)
+    }
+
+    private func menuRow(_ title: LocalizedStringKey, subtitle: LocalizedStringKey? = nil,
+                         icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            GroupRow(leading: .icon(icon, StrandPalette.accent), title: title, subtitle: subtitle,
+                     showsChevron: true)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 /// Strap-history sync state inside the Data Sources card. Owns LiveState; display-only.
 ///
 /// B1 (docs/bugs/2026-07-15-strap-battery-backfill-observability.md): the v8 Liquid redesign shipped no
@@ -2240,7 +2527,9 @@ private extension View {
 /// it has pulled, and when one last completed. It does NOT yet say "~15h behind" — that needs the
 /// persisted data frontier (max HR ts) compared against `strapRange.newestUnix`, and the frontier is a
 /// Repository read that LiveState does not carry. That remains open in B1. Kept here in the Data Sources
-/// card as the detailed view; the Devices screen now owns the larger at-a-glance sync card.
+/// card as the detailed view; the Devices screen owns the larger at-a-glance sync card, and the header
+/// menu's Devices row subtitle (`TodayMenuSheet`) is the one-tap-away ambient signal since the Hearth
+/// header cleanup replaced the old always-visible sync chip.
 private struct LiquidSyncStatusRow: View {
     @EnvironmentObject var live: LiveState
     var body: some View {
@@ -2318,6 +2607,15 @@ private struct LiquidStrapBatteryRow: View {
 // its chrome modifiers are iOS-only, so they are wrapped here: `topBarTrailing` + `navigationBarTitleDisplayMode`
 // don't exist on macOS, and `presentationCompactAdaptation` is an iOS phone-width concern. These keep the
 // exact iOS behaviour while giving macOS the platform-correct equivalent.
+/// One tick of the root scroll's geometry, as read by the iOS 18+ pull driver
+/// (`liquidPullGeometryDriver`). `overscroll` > 0 while rubber-banding past the top; the sizes
+/// exist for the DEBUG readout (they answer "is the content even taller than the viewport?").
+private struct LiquidPullGeoSample: Equatable {
+    var overscroll: CGFloat
+    var contentHeight: CGFloat
+    var containerHeight: CGFloat
+}
+
 private extension View {
     /// A sheet's trailing "Done" button (inline title on iOS; the confirmation-action toolbar slot on macOS).
     @ViewBuilder func liquidSheetDoneChrome(done: @escaping () -> Void) -> some View {
@@ -2334,6 +2632,41 @@ private extension View {
                 Button("Done", action: done).foregroundStyle(StrandPalette.accent)
             }
         }
+        #endif
+    }
+
+    /// iOS 18+: drive the pull zones straight off the scroll view's own `ScrollGeometry`. Unlike the
+    /// GeometryReader/PreferenceKey probe (which rides SwiftUI's render loop and can lag or drop
+    /// updates mid-gesture on real devices), `onScrollGeometryChange` observes the scroll view's
+    /// content offset directly and fires on every scroll tick. The overscroll it derives matches the
+    /// probe's convention exactly: positive past the top, negative once scrolled down, so
+    /// `handlePull`'s zones and the scroll-down dismissal are unchanged. A no-op on macOS / iOS 17,
+    /// where the preference probe still owns `handlePull`.
+    @ViewBuilder func liquidPullGeometryDriver(_ onSample: @escaping (LiquidPullGeoSample) -> Void) -> some View {
+        #if os(iOS)
+        if #available(iOS 18.0, *) {
+            self.onScrollGeometryChange(for: LiquidPullGeoSample.self, of: { geo in
+                LiquidPullGeoSample(
+                    overscroll: -(geo.contentOffset.y + geo.contentInsets.top),
+                    contentHeight: geo.contentSize.height,
+                    containerHeight: geo.containerSize.height)
+            }, action: { _, sample in onSample(sample) })
+        } else { self }
+        #else
+        self
+        #endif
+    }
+
+    /// Force rubber-band overscroll even when content is SHORTER than the viewport (iOS 16.4+) — a
+    /// sparse-history Today (a fresh pair, or NOOP's own #194-era ~2-day accounts) has no scrollable
+    /// height, so without this a plain `ScrollView` never bounces at all: pulling down produces zero
+    /// offset, and BOTH the 8c reveal and the pre-existing #334 pull-to-sync silently never fire. A
+    /// no-op on macOS, where this is a touch-pull gesture with no trackpad equivalent anyway.
+    @ViewBuilder func liquidAlwaysBounceVertical() -> some View {
+        #if os(iOS)
+        self.scrollBounceBehavior(.always, axes: .vertical)
+        #else
+        self
         #endif
     }
 

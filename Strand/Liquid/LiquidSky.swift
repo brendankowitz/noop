@@ -8,6 +8,13 @@
 import SwiftUI
 import StrandDesign
 
+/// One stop of a radial sky ramp: a color and its normalized distance from the gradient's center
+/// (0 = the hot core, 1 = the outer edge). bknoop fork addition — see `LiquidSkyStop.ramp`.
+struct LiquidSkyRampStop {
+    let color: Color
+    let loc: Double
+}
+
 struct LiquidSkyStop {
     let h: Double
     let top: Color, mid: Color, hor: Color
@@ -19,6 +26,16 @@ struct LiquidSkyStop {
     var sunX: Double = 0.5
     var sunY: Double = 0.1
     var sunIntensity: Double = 0
+    /// bknoop fork: when non-nil, the sky is ONE elliptical radial gradient — the mockup's own
+    /// technique (`radial-gradient(132% 86% at 76% 2%, …)`) — centered at (`sunX`, `sunY`) with these
+    /// stops running center → edge, and the legacy vertical bands + `drawSun` glow are not drawn at
+    /// all: the ramp's own hot core IS the sun. Every keyframe in an array must carry the same stop
+    /// COUNT for interpolation (locations may differ; they lerp too). nil (upstream's default) keeps
+    /// the legacy renderer byte-for-byte.
+    var ramp: [LiquidSkyRampStop]? = nil
+    /// Ellipse radii as fractions of the sky rect's width/height — CSS `radial-gradient(132% 86% …)`.
+    var rampRX: Double = 1.32
+    var rampRY: Double = 0.86
 }
 
 private func hx(_ hex: UInt32) -> Color {
@@ -61,18 +78,69 @@ private func lerpColor(_ a: Color, _ b: Color, _ t: Double) -> Color {
 /// zero behavior change for anyone who never sets it.
 var liquidSkyOverride: LiquidSkyStop? = nil
 
-func liquidSkyAt(_ hour: Double) -> (top: Color, mid: Color, hor: Color, stars: Double, warm: Double,
-                                      sunX: Double, sunY: Double, sunIntensity: Double) {
-    if let o = liquidSkyOverride {
-        return (o.top, o.mid, o.hor, o.stars, o.warm, o.sunX, o.sunY, o.sunIntensity)
-    }
+func liquidSkyAt(_ hour: Double) -> LiquidSkyStop {
+    if let o = liquidSkyOverride { return o }
     var i = 0
     while i < liquidSkyKeys.count - 2 && liquidSkyKeys[i + 1].h <= hour { i += 1 }
     let a = liquidSkyKeys[i], b = liquidSkyKeys[i + 1]
     let t = max(0, min(1, (hour - a.h) / (b.h - a.h)))
-    return (lerpColor(a.top, b.top, t), lerpColor(a.mid, b.mid, t), lerpColor(a.hor, b.hor, t),
-            lerp(a.stars, b.stars, t), lerp(a.warm, b.warm, t),
-            lerp(a.sunX, b.sunX, t), lerp(a.sunY, b.sunY, t), lerp(a.sunIntensity, b.sunIntensity, t))
+    var out = LiquidSkyStop(
+        h: hour,
+        top: lerpColor(a.top, b.top, t), mid: lerpColor(a.mid, b.mid, t), hor: lerpColor(a.hor, b.hor, t),
+        stars: lerp(a.stars, b.stars, t), warm: lerp(a.warm, b.warm, t),
+        sunX: lerp(a.sunX, b.sunX, t), sunY: lerp(a.sunY, b.sunY, t),
+        sunIntensity: lerp(a.sunIntensity, b.sunIntensity, t))
+    // Ramp interpolation is stop-wise (colors AND locations lerp), so the whole gradient — its hot
+    // core's hue, where each band sits, and via sunX/sunY above the core's position — slides
+    // continuously through the day. Requires equal stop counts on both keys; a mixed nil/non-nil
+    // pair (never the case for the fork, which ramps every key) falls back to the legacy fields.
+    if let ra = a.ramp, let rb = b.ramp, ra.count == rb.count {
+        out.ramp = zip(ra, rb).map {
+            LiquidSkyRampStop(color: lerpColor($0.color, $1.color, t), loc: lerp($0.loc, $1.loc, t))
+        }
+        out.rampRX = lerp(a.rampRX, b.rampRX, t)
+        out.rampRY = lerp(a.rampRY, b.rampRY, t)
+    }
+    return out
+}
+
+/// The mockup's sky, drawn the mockup's way: ONE elliptical radial gradient whose off-center hot
+/// core is the light source — CSS `radial-gradient(132% 86% at X% Y%, …)` reproduced in Canvas.
+/// GraphicsContext only offers a circular radial shading, so the ellipse comes from drawing a circle
+/// of radius rxPx through a context scaled by ryPx/rxPx about the center (the center is a fixed
+/// point of that transform, so it stays put while the circle squashes to `rxPx × ryPx`). The context
+/// is a value copy — the caller's transform is untouched.
+private func drawRampSky(_ base: GraphicsContext, ramp: [LiquidSkyRampStop], S: LiquidSkyStop,
+                         w: CGFloat, h: CGFloat) {
+    let cx = S.sunX * w, cy = S.sunY * h
+    let rxPx = max(1, S.rampRX * w), ryPx = max(1, S.rampRY * h)
+    var g = base
+    g.translateBy(x: cx, y: cy)
+    g.scaleBy(x: 1, y: ryPx / rxPx)
+    g.translateBy(x: -cx, y: -cy)
+    // Oversized in pre-transform space so its image still covers the whole sky after the squash;
+    // Canvas clips to its own bounds, so the excess costs nothing.
+    let cover = CGRect(x: -w * 2, y: -h * 12, width: w * 5, height: h * 30)
+    g.fill(Path(cover),
+           with: .radialGradient(
+               Gradient(stops: ramp.map { .init(color: $0.color, location: $0.loc) }),
+               center: CGPoint(x: cx, y: cy), startRadius: 0, endRadius: rxPx))
+}
+
+/// The base sky fill, shared by `LiquidSky` and `LiquidSkyStatic`: the fork's single radial ramp
+/// when the interpolated stop carries one, else upstream's vertical three-band linear + sun glow.
+private func drawSkyBase(_ ctx: inout GraphicsContext, S: LiquidSkyStop, w: CGFloat, h: CGFloat) {
+    if let ramp = S.ramp {
+        drawRampSky(ctx, ramp: ramp, S: S, w: w, h: h)
+    } else {
+        ctx.fill(Path(CGRect(x: 0, y: 0, width: w, height: h)),
+                 with: .linearGradient(Gradient(stops: [
+                    .init(color: S.top, location: 0),
+                    .init(color: S.mid, location: 0.5),
+                    .init(color: S.hor, location: 0.9)]),
+                                       startPoint: CGPoint(x: 0, y: 0), endPoint: CGPoint(x: 0, y: h)))
+        drawSun(&ctx, sunX: S.sunX, sunY: S.sunY, intensity: S.sunIntensity, w: w, h: h)
+    }
 }
 
 /// The soft light-source glow (bknoop fork addition): a large, soft radial wash centered at the
@@ -140,19 +208,15 @@ struct LiquidSky: View {
         let w = size.width, h = size.height
         var ctx = base
         // the gradient IS the scene
-        ctx.fill(Path(CGRect(x: 0, y: 0, width: w, height: h)),
-                 with: .linearGradient(Gradient(stops: [
-                    .init(color: S.top, location: 0),
-                    .init(color: S.mid, location: 0.5),
-                    .init(color: S.hor, location: 0.9)]),
-                                       startPoint: CGPoint(x: 0, y: 0), endPoint: CGPoint(x: 0, y: h)))
-        drawSun(&ctx, sunX: S.sunX, sunY: S.sunY, intensity: S.sunIntensity, w: w, h: h)
+        drawSkyBase(&ctx, S: S, w: w, h: h)
         // slow breath of light low in the sky
         let breathe = 0.5 + 0.5 * sin(now * 0.22)
         ctx.fill(Path(CGRect(x: 0, y: h * 0.45, width: w, height: h * 0.55)),
                  with: .linearGradient(Gradient(colors: [.white.opacity(0), .white.opacity(0.05 + breathe * 0.03)]),
                                        startPoint: CGPoint(x: 0, y: h * 0.45), endPoint: CGPoint(x: 0, y: h)))
-        if S.warm > 0.01 {
+        // The warm bottom wash belongs to the legacy cool-blue bands; a radial ramp already carries
+        // its own warmth, and tinting it would pull the mockup's measured colors off.
+        if S.ramp == nil, S.warm > 0.01 {
             let warm = Color(.sRGB, red: 1, green: 200/255, blue: 120/255, opacity: 1)
             ctx.fill(Path(CGRect(x: 0, y: h * 0.55, width: w, height: h * 0.45)),
                      with: .linearGradient(Gradient(colors: [warm.opacity(0), warm.opacity(S.warm * 0.10)]),
@@ -196,15 +260,36 @@ struct LiquidSky: View {
 struct LiquidScaffoldSky: View {
     var height: CGFloat = 240
     @AppStorage(SceneBackgroundPrefs.enabledKey) private var showDayCycleBackground = true
-    @AppStorage(SkyBehindCardsPrefs.enabledKey) private var skyBehindCards = true
 
     var body: some View {
-        if showDayCycleBackground {
-            LiquidSkyStatic(hour: nil, settleStrength: skyBehindCards ? 0.78 : 1)
-                .frame(maxWidth: .infinity, maxHeight: skyBehindCards ? .infinity : nil)
-                .frame(height: skyBehindCards ? nil : height, alignment: .top)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+        // The Hearth sheet layout ALWAYS has a header band (white kicker/serif text sits on it), so
+        // "Day-cycle background" OFF now swaps the sky for the mockup's flat ink rather than removing
+        // the band entirely — bare cream under white text would be unreadable. Full-bleed either way;
+        // the opaque sheet covers everything below the band, so "sky behind cards" no longer applies.
+        Group {
+            if showDayCycleBackground {
+                LiquidSkyStatic(hour: nil, settleStrength: 1)
+            } else {
+                FlatInkFill()
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The flat `#1B1A14` header-band fill with the standard settle fade into the page surface — shared
+/// by `LiquidFlatInkBackground` (the archive screens' scaffold) and `LiquidScaffoldSky`'s
+/// day-cycle-off fallback.
+private struct FlatInkFill: View {
+    var body: some View {
+        ZStack(alignment: .top) {
+            liquidFlatInkColor
+            LinearGradient(
+                colors: [StrandPalette.surfaceBase.opacity(0), StrandPalette.surfaceBase],
+                startPoint: UnitPoint(x: 0.5, y: 0.45), endPoint: UnitPoint(x: 0.5, y: 1.0)
+            )
         }
     }
 }
@@ -218,33 +303,21 @@ func liquidScaffoldSky(height: CGFloat = 240) -> AnyView {
 /// of the app you are in." A flat `#1B1A14` fill, same frame/height/settle-fade shape as
 /// `LiquidScaffoldSky` so it drops into the exact same `topBackground:` slot, for the screens that are
 /// archive/reference rather than a lived moment.
-private let liquidFlatInkColor = Color(.sRGB, red: 0x1B / 255, green: 0x1A / 255, blue: 0x14 / 255, opacity: 1)
+// Internal (not private): LiquidTodayView paints the same flat ink behind its sky block when the
+// day-cycle background is toggled off, so the hero's white-on-sky text stays readable.
+let liquidFlatInkColor = Color(.sRGB, red: 0x1B / 255, green: 0x1A / 255, blue: 0x14 / 255, opacity: 1)
 
 struct LiquidFlatInkBackground: View {
     var height: CGFloat = 240
-    @AppStorage(SceneBackgroundPrefs.enabledKey) private var showDayCycleBackground = true
-    @AppStorage(SkyBehindCardsPrefs.enabledKey) private var skyBehindCards = true
 
     var body: some View {
-        if showDayCycleBackground {
-            // Same two-layer settle technique LiquidSkyStatic uses (flat fill + a separate transparent
-            // -> opaque settle-color fade on top), just without a Canvas — flat ink has no stars/sun/
-            // animation to justify one. `UnitPoint` fractions are relative to this view's own bounds,
-            // matching the Canvas version's `h * 0.45 ... h` band without needing pixel geometry.
-            let settle = StrandPalette.surfaceBase
-            let settleStrength = skyBehindCards ? 0.78 : 1.0
-            ZStack(alignment: .top) {
-                liquidFlatInkColor
-                LinearGradient(
-                    colors: [settle.opacity(0), settle.opacity(settleStrength)],
-                    startPoint: UnitPoint(x: 0.5, y: 0.45), endPoint: UnitPoint(x: 0.5, y: 1.0)
-                )
-            }
-            .frame(maxWidth: .infinity, maxHeight: skyBehindCards ? .infinity : nil)
-            .frame(height: skyBehindCards ? nil : height, alignment: .top)
+        // Static ink — nothing here animates, so the "Day-cycle background" pref no longer removes it
+        // (the sheet layout's white header text needs the band; see LiquidScaffoldSky). Full-bleed;
+        // the opaque sheet covers everything below the band.
+        FlatInkFill()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
-        }
     }
 }
 
@@ -261,21 +334,21 @@ struct LiquidSkyStatic: View {
     /// See `LiquidSky.settleStrength` — 1 = default seamless fade; <1 holds the atmosphere for the
     /// full-height "sky behind cards" backdrop.
     var settleStrength: Double = 1
+    /// bknoop fork: render THIS stop instead of resolving the hour on the day cycle. For skies the app
+    /// *triggers* rather than schedules — onboarding's warm/green/closing moments (`HearthTheme
+    /// .onboardingSky` & friends) — which must neither read `liquidSkyOverride` nor set it (that
+    /// global belongs to the illness alarm and would leak across every mounted sky). nil (the default)
+    /// is the exact prior behaviour.
+    var stop: LiquidSkyStop? = nil
 
     var body: some View {
         let h = hour ?? liveHour()
         // Reads the actual token — see the identical fix + rationale in `LiquidSky.body` above.
         let settle = StrandPalette.surfaceBase
         Canvas { ctx, size in
-            let S = liquidSkyAt(h)
+            let S = stop ?? liquidSkyAt(h)
             let w = size.width, hh = size.height
-            ctx.fill(Path(CGRect(x: 0, y: 0, width: w, height: hh)),
-                     with: .linearGradient(Gradient(stops: [
-                        .init(color: S.top, location: 0),
-                        .init(color: S.mid, location: 0.5),
-                        .init(color: S.hor, location: 0.9)]),
-                                           startPoint: CGPoint(x: 0, y: 0), endPoint: CGPoint(x: 0, y: hh)))
-            drawSun(&ctx, sunX: S.sunX, sunY: S.sunY, intensity: S.sunIntensity, w: w, h: hh)
+            drawSkyBase(&ctx, S: S, w: w, h: hh)
             if S.stars > 0.01 {
                 for s in liquidStars {
                     let o = S.stars * (0.04 + s.z * 0.16)

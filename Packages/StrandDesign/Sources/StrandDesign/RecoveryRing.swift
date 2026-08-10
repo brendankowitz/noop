@@ -7,18 +7,17 @@ import SwiftUI
 // lightweight GlowRing instead). The pure `RecoveryArc` Shape at the bottom of this file stays
 // available on ALL platforms because the watch-safe BevelGauge / BrandMark depend on it.
 //
-// A 240° open gauge arc (gap at the bottom), thick rounded-cap stroke filled
-// with an AngularGradient sampling the recovery gradient (WHOOP: value-based
-// green→yellow→red via `recoveryStops`), filled to score/100 of the 240° span
-// over a faint `surfaceInset` track. NO outer bloom (WHOOP-flat); a crisp leading
-// bead at the fill tip; a draw-in animation when the value changes. Center shows the
-// big rounded-700 number (no %), a state word tinted to the sampled color, and an
-// optional supporting line.
+// A 240° open gauge arc (gap at the bottom), thick rounded-cap stroke filled with a
+// FLAT solid colour — the recovery value colour (`recoveryColor(score)`), one tone for
+// the current state, not a swept gradient (Hearth: skies are the only gradients) —
+// filled to score/100 of the 240° span over a faint `surfaceInset` track. A draw-in
+// animation when the value changes. Center shows the big number (no %), a state word
+// tinted to the value colour, and an optional supporting line.
 //
 // This is also the app's BRAND GLYPH: an open ~80% ring + a SOLID ACCENT CORE DOT
 // ("on-device core"). The recovery ring uniquely carries a micro "NOOP" wordmark
 // above the number (letter-spacing ≈ .34em, tertiary) so the lock-up reads as the
-// "O" in NOOP. The arc geometry, gradient stroke, track and centre number live in
+// "O" in NOOP. The arc geometry, flat stroke, track and centre number live in
 // the shared `BevelGauge`; this view layers the wordmark + core dot on top.
 
 #if !os(watchOS)
@@ -80,7 +79,6 @@ public struct RecoveryRing: View {
         ZStack {
             BevelGauge(
                 fraction: fraction,
-                stops: StrandPalette.recoveryStops,
                 tipColor: tipColor,
                 numberText: numberString,
                 captionText: showsLabel ? "of 100" : nil,

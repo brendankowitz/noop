@@ -97,7 +97,9 @@ remains available as a fallback.
   replies (via Swift Package Manager).
 - **Work Sans** (`weiweihuanghuang/Work-Sans`) and **Source Serif 4** (`adobe-fonts/source-serif`) —
   bundled typefaces for the bknoop fork's "Hearth" retheme (`Strand/Resources/Fonts/`), both
-  SIL Open Font License 1.1; license text bundled alongside the font files.
+  SIL Open Font License 1.1; license text bundled alongside the font files. The Work Sans Light (300)
+  and ExtraLight (200) statics are instantiated from the upstream OFL variable font at those weights;
+  their use is covered by the same bundled `WorkSans-OFL.txt`.
 
 NOOP contains no WHOOP proprietary code, binaries, firmware, logos, or assets, and
 performs no DRM circumvention. It operates only with the user's own device and data.

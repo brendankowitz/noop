@@ -149,8 +149,6 @@ struct LiveSessionView: View {
                 .frame(width: ringDiameter + 26, height: ringDiameter + 26)
             BevelGauge(
                 fraction: ringFraction,
-                stops: [Gradient.Stop(color: ringTint.opacity(0.7), location: 0),
-                        Gradient.Stop(color: ringTint, location: 1)],
                 tipColor: ringTint,
                 numberText: bpmText,
                 captionText: showBpm ? "bpm" : nil,

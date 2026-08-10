@@ -685,10 +685,10 @@ struct WorkoutsView: View {
 
     @ViewBuilder
     private func effortHeroGauge(avgStrain: Double, hasData: Bool) -> some View {
-        // The signature liquid gauge: a filling `LiquidVessel` tinted Effort with the typical effort
-        // counting up over it — the SAME hero language Today's score cells, the Sleep Rest hero and the
-        // Trends headline use. The vessel fills to value/max on the user's selected Effort scale; the big
-        // number is the same `effortDisplay` read-out the old ring showed.
+        // The flat Hearth progress ring tinted Effort with the typical effort counting up inside it —
+        // the SAME flat-ring hero language Today's score cells and the Trends headline now use (moved off
+        // the old filling vessel in this retheme). The ring fills to value/max on the user's selected
+        // Effort scale; the big number is the same `effortDisplay` read-out.
         let diameter: CGFloat = 168
         let scaleMax: Double = effortScale == .whoop ? 21 : 100
         let displayValue = UnitFormatter.effortValue(avgStrain, scale: effortScale)
@@ -699,11 +699,15 @@ struct WorkoutsView: View {
                 .foregroundStyle(StrandPalette.effortColor)
             if hasData {
                 ZStack {
-                    // Hero vessel → animated (this is one of the page's live gauges, like the Sleep Rest
-                    // hero and the Today score cells). Reduce-Motion falls back to the static frame inside
-                    // LiquidVessel itself.
-                    LiquidVessel(value: fraction, tint: StrandPalette.effortColor, animated: true)
-                        .frame(width: diameter, height: diameter)
+                    // Hero ring → animated (one of the page's live gauges, like the Today score cells).
+                    // Flat Effort-tinted stroke on a low-opacity Effort track; owns its own draw-in.
+                    HearthProgressRing(
+                        fraction: fraction,
+                        lineWidth: 6,
+                        trackColor: StrandPalette.effortColor.opacity(0.18),
+                        fillColor: StrandPalette.effortColor
+                    )
+                    .frame(width: diameter, height: diameter)
                     VStack(spacing: 0) {
                         // `displayValue` is already on the selected scale (0–100 or 0–21), so the count-up
                         // interpolates it straight to one decimal — no re-scaling in the format closure.
@@ -724,11 +728,17 @@ struct WorkoutsView: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(String(localized: "Typical effort \(UnitFormatter.effortDisplay(avgStrain, scale: effortScale))"))
             } else {
-                // No strain data in the window — an empty vessel (posed, no fill) with a centred "No data",
-                // the honest liquid analogue of the old empty ring.
+                // No strain data in the window — an empty ring (track only, no fill) with a centred
+                // "No data".
                 ZStack {
-                    LiquidVessel(value: 0, tint: StrandPalette.effortColor, animated: false)
-                        .frame(width: diameter, height: diameter)
+                    HearthProgressRing(
+                        fraction: nil,
+                        lineWidth: 6,
+                        trackColor: StrandPalette.effortColor.opacity(0.18),
+                        fillColor: StrandPalette.effortColor,
+                        animated: false
+                    )
+                    .frame(width: diameter, height: diameter)
                     Text("No data")
                         .font(StrandFont.headline)
                         .foregroundStyle(StrandPalette.textSecondary)

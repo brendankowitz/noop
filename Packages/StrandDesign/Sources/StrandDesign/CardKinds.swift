@@ -74,12 +74,12 @@ public struct GroupRow<Accessory: View>: View {
         // Spacer/padding regions for every sibling. Matches the pre-existing `MoreRow` (RootTabView),
         // which already carried this for the same reason.
         .contentShape(Rectangle())
-        // Same technique as the existing `MoreRow` (RootTabView): every row draws its OWN bottom
-        // hairline; the container clips to its rounded shape so only the last row's divider gets
-        // trimmed at the corners, reading as one continuous divided list rather than N separate lines.
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(StrandPalette.hairline).frame(height: 1)
-        }
+        // The row itself draws NO divider — `GroupCard` inserts one BETWEEN rows (see its
+        // `_VariadicView` layout below). An earlier "every row draws its own bottom hairline, rely on
+        // the card's corner clip to trim the last one" approach didn't actually work: the clip only
+        // cuts into the CURVED corner region, and a card's straight bottom edge is flush with where
+        // that divider sits — so the last row's hairline rendered as a visible extra border sitting
+        // just inside the card's real bottom edge, not something the clip ever trimmed.
     }
 
     private var leadingAlignment: VerticalAlignment { if case .time = leading { return .firstTextBaseline }; return .center }
@@ -131,13 +131,29 @@ public struct GroupCard<Rows: View>: View {
             if let title {
                 Text(title).strandOverline().padding(.top, 20).padding(.bottom, 14)
             }
-            rows()
+            _VariadicView.Tree(GroupCardRowsLayout(), content: rows)
         }
         .padding(.horizontal, 22)
         .padding(.vertical, title == nil ? 4 : 0)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(FrostedCardSurface(cornerRadius: NoopMetrics.rowCardRadius))
         .clipShape(RoundedRectangle(cornerRadius: NoopMetrics.rowCardRadius, style: .continuous))
+    }
+}
+
+/// Inserts a hairline divider BETWEEN each `GroupRow` — never before the first, never after the
+/// last — by walking `rows()`'s actual children via `_VariadicView`. This is what makes the divided
+/// list read as "N rows, N-1 hairlines" instead of relying on a corner clip to hide a trailing one.
+private struct GroupCardRowsLayout: _VariadicView_UnaryViewRoot {
+    @ViewBuilder
+    func body(children: _VariadicView.Children) -> some View {
+        let lastID = children.last?.id
+        ForEach(children) { child in
+            child
+            if child.id != lastID {
+                Rectangle().fill(StrandPalette.hairline).frame(height: 1)
+            }
+        }
     }
 }
 

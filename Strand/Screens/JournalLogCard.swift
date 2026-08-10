@@ -110,25 +110,27 @@ struct JournalLogCard: View {
                     .onChangeCompat(of: dayOffset) { _ in proxy.scrollTo(dayOffset, anchor: .center) }
                 }
             }
-            NoopCard(tint: StrandPalette.restColor) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(editing
-                         ? "Rename, regroup, or remove an item to tidy your list. Renaming keeps the original question behind the scenes, so a WHOOP import still lines up. Custom items are deleted; built-in ones are hidden and can be restored below."
-                         : dayOffset == -1
-                         ? "Logging ahead for tomorrow: today's activities inform tomorrow's recovery, just as yesterday's are reflected in today's. Tomorrow's answers line up with tomorrow's morning."
-                         : "Answers are about the night and day leading into this morning, the same attribution a WHOOP export uses, so logged and imported days line up.")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    ForEach(JournalGroup.displayOrder, id: \.self) { group in
-                        groupBlock(group)
-                    }
-
-                    Divider().overlay(StrandPalette.hairline)
-                    addRow
+            // Hearth "Group" card: the journal IS a list (grouped questions, one answer control per
+            // row), so it takes the divided GroupCard rather than a tinted panel. GroupCard draws the
+            // hairline BETWEEN its children, so each group block is one child and the explicit divider
+            // above the add row is gone. The explanatory paragraph moves BELOW the card — a Group card
+            // holds rows, not prose.
+            GroupCard {
+                ForEach(JournalGroup.displayOrder, id: \.self) { group in
+                    groupBlock(group)
                 }
+
+                // The last row is the add affordance (mockup's rule for every Group card that logs).
+                addRow
             }
+            Text(editing
+                 ? "Rename, regroup, or remove an item to tidy your list. Renaming keeps the original question behind the scenes, so a WHOOP import still lines up. Custom items are deleted; built-in ones are hidden and can be restored below."
+                 : dayOffset == -1
+                 ? "Logging ahead for tomorrow: today's activities inform tomorrow's recovery, just as yesterday's are reflected in today's. Tomorrow's answers line up with tomorrow's morning."
+                 : "Answers are about the night and day leading into this morning, the same attribution a WHOOP export uses, so logged and imported days line up.")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .sheet(item: $renaming) { item in renameSheet(item) }
     }
@@ -155,6 +157,10 @@ struct JournalLogCard: View {
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(StrandPalette.textTertiary)
                     }
+                    // The whole header line toggles the group — without an explicit hit shape only the
+                    // text glyphs themselves were tappable, not the gap or the trailing chevron region.
+                    .frame(minHeight: 30)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(group.title), \(groupItems.count) items, \(collapsed ? "collapsed" : "expanded")")
@@ -163,6 +169,10 @@ struct JournalLogCard: View {
                     ForEach(groupItems) { item in itemRow(item) }
                 }
             }
+            // Row metrics for the card's divided list: each group block is one child of `GroupCard`,
+            // which draws the hairline between blocks.
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -183,6 +193,9 @@ struct JournalLogCard: View {
                 answerPill("No", q: item.canonical, value: false)
             }
         }
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
     // MARK: - Numeric field
@@ -343,6 +356,9 @@ struct JournalLogCard: View {
             .labelsHidden()
             .accessibilityLabel("New item group")
         }
+        // The add affordance is the card's last row — same 14pt row rhythm as the group blocks above.
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Controls

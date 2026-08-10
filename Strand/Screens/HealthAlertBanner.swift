@@ -7,15 +7,16 @@ struct HealthAlertBanner: View {
     @EnvironmentObject var model: AppModel
     var body: some View {
         if let alert = model.healthAlert {
-            // A frosted, warning-tinted alert card (not a flat coloured bar) — prominent but on-brand.
-            // The amber wash + a glyph in a soft amber chip read as an early-warning without a hard rule.
-            NoopCard(padding: 14, tint: StrandPalette.statusWarning) {
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(StrandPalette.statusWarning)
+            // Hearth "Alert" card: the flat clay surface, no shadow and no tint wash. The clay IS the
+            // flag — the previous amber-frosted `NoopCard(tint:)` treatment layered a gradient wash and a
+            // card shadow on top of that signal, which the design vocabulary reserves for a plain card.
+            AlertCard {
+                HStack(alignment: .top, spacing: 14) {
+                    Image(systemName: "exclamationmark")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(StrandPalette.statusCritical)
                         .frame(width: 30, height: 30)
-                        .background(StrandPalette.statusWarning.opacity(0.16), in: Circle())
+                        .background(StrandPalette.statusCritical.opacity(0.18), in: Circle())
                         .accessibilityHidden(true)
                     Text(alert)
                         .font(StrandFont.subhead)
@@ -28,4 +29,22 @@ struct HealthAlertBanner: View {
             .accessibilityElement(children: .combine)
         }
     }
+}
+
+// MARK: - The one-Alert-at-a-time rule
+//
+// The Hearth design contract states it flatly: "At most one Alert on screen. When the illness banner
+// and the stress check-in both qualify, the banner wins and the check-in waits." `AlertCard` itself
+// can't enforce that (it has no idea what else is on screen), so the priority lives here, beside the
+// winner, as ONE readable predicate rather than a rule re-derived at each call site.
+//
+// The banner is the top of the order because it is the only one of the three Alerts that reports a
+// measured multi-day deviation from the user's own baseline; the stress check-in is a passive
+// suggestion and the auto-workout card is a suggestion about something already over. A lower-priority
+// Alert is SUPPRESSED for that render pass, never dismissed — the check-in's `pending` nudge and the
+// detected-workout candidate both survive, so each reappears once the banner clears.
+enum TodayAlertPriority {
+    /// True while the illness/strain banner is claiming the screen's single Alert slot.
+    @MainActor
+    static func bannerIsShowing(_ model: AppModel) -> Bool { model.healthAlert != nil }
 }

@@ -78,8 +78,13 @@ struct DataSourcesView: View {
     }
 
     var body: some View {
-        ScreenScaffold(title: "Data Sources",
-                       subtitle: "Everything stays on \(Platform.deviceNounPhrase). Bring your history in once, then it's yours.",
+        ScreenScaffold(title: "Data sources",
+                       // The mockup's provenance sentence, built ONLY from figures this screen already
+                       // shows (the WHOOP card's own "N days · M sleeps stored" counts) plus the app's
+                       // standing on-device line. NOT the mockup's literal "four sources feeding today,
+                       // everything current except Apple Health" — nothing in the tree records a per-source
+                       // last-read time for the file importers, so that sentence would be invented.
+                       subtitle: LocalizedStringKey(headerStatement),
                        onRefresh: { await repo.refresh() },
                        // PERF: a ten-card import/source column (WHOOP, Apple Health, Xiaomi, nutrition,
                        // lifting, activity files, wearables, Oura cloud, broadcast-out, live strap). The LazyVStack
@@ -88,8 +93,15 @@ struct DataSourcesView: View {
                        // direct children. NOTE: this screen still observes `LiveState` for the broadcaster
                        // lifecycle binding in onAppear/onDisappear, so a ~1 Hz tick still re-evaluates the
                        // built cards — that observation can't be removed here (see the lane-B2 note).
-                       lazy: true) {
+                       lazy: true,
+                       // Flat ink, not the sky: Data Sources is an archive/utility page, not a lived
+                       // moment (the mockup's own note for this screen is "the one-line flat-ink fix").
+                       topBackground: liquidFlatInkBackground()) {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
+                connectedCard
+                syncNowAction
+                storedCard
+                SectionHeader("Bring your history in", overline: "Imports")
                 whoopCard.staggeredAppear(index: 0)
                 appleHealthCard.staggeredAppear(index: 1)
                 xiaomiCard.staggeredAppear(index: 2)
@@ -101,7 +113,6 @@ struct DataSourcesView: View {
                 ouraCloudCard.staggeredAppear(index: 7)
                 #endif
                 broadcastHrCard.staggeredAppear(index: 8)
-                liveCard.staggeredAppear(index: 9)
             }
         }
         .onAppear {
@@ -910,19 +921,73 @@ struct DataSourcesView: View {
         .accessibilityLabel("\(title): \(detail)")
     }
 
-    private var liveCard: some View {
-        // Three-state, consistent with the Live screen's connection pill — a connected-but-
-        // not-yet-streaming strap (e.g. an experimental WHOOP 5/MG link) no longer reads as
-        // "Not connected" on one screen and "Connected" on another (issue #8).
-        let (tone, label): (StrandTone, LocalizedStringKey) =
-            live.bonded ? (.positive, "Bonded, streaming.")
-            : live.connected ? (.warning, "Connected.")
-            : (.critical, "Not connected. Open Live to pair.")
-        return card(title: String(localized: "WHOOP Strap (Live BLE)"), icon: "antenna.radiowaves.left.and.right",
-             tint: StrandPalette.accent,
-             status: StatePill(label, tone: tone, pulsing: live.connected && !live.bonded),
-             subtitle: String(localized: "Pairs directly with your strap over Bluetooth: no WHOOP app, no cloud.")) {
-            EmptyView()
+    // MARK: - Header statement + the mockup's "Connected" / stored group cards
+
+    /// The flat-ink header's serif line. Every figure is one the screen already carries; the closing
+    /// sentence is this screen's own existing copy, kept verbatim.
+    private var headerStatement: String {
+        guard !repo.days.isEmpty else {
+            return String(localized: "Nothing imported yet. Bring your history in once, then it's yours.")
+        }
+        return String(localized: "\(repo.days.count) days and \(repo.sleeps.count) sleep sessions stored. Everything stays on \(Platform.deviceNounPhrase).")
+    }
+
+    /// The mockup's "Connected" group. The live strap is the only source in the tree that reports a real
+    /// connection state and a real last-synced time, so it is the only row here — the file importers below
+    /// have neither, and inventing a status dot for them would be fabricating provenance. The dot's colour
+    /// is the same three-state read the Live screen's pill uses (issue #8): sage bonded, amber connected but
+    /// not yet streaming, terracotta offline.
+    private var connectedCard: some View {
+        let (dot, label): (Color, String) =
+            live.bonded ? (StrandPalette.statusPositive, String(localized: "Bonded, streaming"))
+            : live.connected ? (StrandPalette.statusWarning, String(localized: "Connected, pairing"))
+            : (StrandPalette.statusCritical, String(localized: "Not connected. Open Live to pair"))
+        var parts = [label]
+        // The one genuinely real "synced N ago" the mockup asks for — the same `lastSyncedAt` +
+        // `relativeAgo` pairing the Health screen's sync status already renders.
+        if let last = live.lastSyncedAt { parts.append(String(localized: "history synced \(relativeAgo(last))")) }
+        return GroupCard("Connected") {
+            GroupRow(leading: .swatch(dot),
+                     title: "WHOOP strap (live BLE)",
+                     subtitle: LocalizedStringKey(parts.joined(separator: " · ")))
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The mockup's ink "Sync now" row. Reaches the SAME gated entry point the Health screen's Sync-now
+    /// button uses (`BLEManager.syncNow()` is a no-op when no strap is connected or a sync is running), and
+    /// is disabled — with an honest subtitle saying why — whenever it can't run.
+    private var syncNowAction: some View {
+        let canSync = live.connected && live.bonded && !live.backfilling
+        let subtitle: String
+        if live.backfilling {
+            subtitle = String(localized: "Pulling your strap's stored history…")
+        } else if !live.connected {
+            subtitle = String(localized: "Connect your strap first.")
+        } else if !live.bonded {
+            subtitle = String(localized: "Finishing the pairing handshake.")
+        } else {
+            subtitle = String(localized: "Pulls your strap's stored history right away.")
+        }
+        return ActionCard(icon: "arrow.triangle.2.circlepath",
+                          title: live.backfilling ? "Syncing…" : "Sync now",
+                          subtitle: LocalizedStringKey(subtitle)) {
+            model.ble.syncNow()
+        }
+        .disabled(!canSync)
+        // `.disabled` alone leaves a custom-filled card looking tappable, so dim it too — a dark ink
+        // row that can't run should read as unavailable, not just fail silently on tap.
+        .opacity(canSync ? 1 : 0.5)
+        .accessibilityLabel("Sync now")
+        .accessibilityHint(subtitle)
+    }
+
+    /// What is actually on the device — the mockup's second group, built from the counts the WHOOP card
+    /// already prints. No file provenance rows: nothing records which file a stored day came from.
+    private var storedCard: some View {
+        GroupCard("Stored on \(Platform.deviceNounPhrase)") {
+            GroupRow(title: "Days of history", value: "\(repo.days.count)")
+            GroupRow(title: "Sleep sessions", value: "\(repo.sleeps.count)")
         }
     }
 

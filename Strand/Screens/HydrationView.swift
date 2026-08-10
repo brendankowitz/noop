@@ -100,12 +100,16 @@ struct HydrationView: View {
                 // litre figure counts up over it; the vessel fills to the SAME animated `heroFraction`
                 // driven on appear / after a log, so the fill and the number roll-up land together.
                 ZStack {
-                    LiquidVessel(value: heroFraction, tint: StrandPalette.accent, animated: true)
+                    // Rides the caller's `heroFraction` animation transaction (animated: false) so the flat
+                    // ring rises with the count-up number instead of layering a second 0.9s ease-out.
+                    HearthProgressRing(fraction: heroFraction, lineWidth: 6,
+                                       trackColor: StrandPalette.accent.opacity(0.18),
+                                       fillColor: StrandPalette.accent, animated: false)
                         .frame(width: 184, height: 184)
                     VStack(spacing: 2) {
                         CountUpText(value: HydrationGoal.litres(fromML: totalML),
                                     format: { String(format: "%.1f", $0) },
-                                    font: StrandFont.rounded(40, weight: .bold),
+                                    font: StrandFont.rounded(40, weight: .light),
                                     color: StrandPalette.textPrimary)
                             .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
                         Text(String(localized: "of \(String(format: "%.1f", HydrationGoal.litres(fromML: Double(goalML)))) L"))
@@ -454,7 +458,7 @@ private struct HydrationAmountSheet: View {
                     .foregroundStyle(StrandPalette.textSecondary)
                 Spacer()
                 Text("\(ml) ml")
-                    .font(StrandFont.rounded(28, weight: .bold))
+                    .font(StrandFont.rounded(28, weight: .light))
                     .foregroundStyle(StrandPalette.textPrimary)
                     .monospacedDigit()
             }

@@ -687,6 +687,7 @@ struct MetricDetailView: View {
                     readingsTable(windowed: win)
                     correlationCard
                 }
+                Color.clear.frame(height: 90) // floating tab-bar clearance
             }
             .padding(NoopMetrics.screenPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -786,23 +787,28 @@ struct MetricDetailView: View {
                 // well — never over the chart below.
                 HStack {
                     Spacer(minLength: 0)
-                    if let fraction, let v = value {
+                    if fraction != nil, let v = value {
                         VStack(spacing: 10) {
                             ZStack {
-                                // The big hero vessel stays live (animated) — the one sloshing gauge on the
-                                // screen, exactly like the hero gauges on Today.
-                                LiquidVessel(value: heroAnimatedFraction, tint: domain.bright, animated: true)
+                                // Flat Hearth ring on the (now theme-aware, cream-in-light) scenic backdrop —
+                                // a domain-tinted track + fill, both readable on cream and on the dark night
+                                // sky. Rides the caller's `heroAnimatedFraction` transaction (animated:
+                                // false), so it draws in once on appear like Today's hero rings without a
+                                // second ease-out on top.
+                                HearthProgressRing(fraction: heroAnimatedFraction, lineWidth: 6,
+                                                   trackColor: domain.bright.opacity(0.18),
+                                                   fillColor: domain.bright, animated: false)
                                     .frame(width: 188, height: 188)
                                     .accessibilityHidden(true)
                                 VStack(spacing: 2) {
+                                    // Flat ring has no dark backing disc, so the numeral reads in the
+                                    // theme-aware textPrimary (dark on cream, light on the night sky).
                                     CountUpNumber(value: v, font: StrandFont.rounded(48))
-                                        .foregroundStyle(.white)
-                                        .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
+                                        .foregroundStyle(StrandPalette.textPrimary)
                                     if !metric.unit.isEmpty {
                                         Text(metric.unit)
                                             .font(StrandFont.footnote)
-                                            .foregroundStyle(.white.opacity(0.85))
-                                            .shadow(color: .black.opacity(0.5), radius: 4, y: 1)
+                                            .foregroundStyle(StrandPalette.textSecondary)
                                     }
                                 }
                                 .allowsHitTesting(false)

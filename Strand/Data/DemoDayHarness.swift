@@ -38,6 +38,13 @@ enum DemoDayHarness {
     /// The override hour for the day-cycle scene, when a frame is active.
     static var hour: Int? { active?.hour }
 
+    /// The RAW requested `--demo-hour` value (not snapped to the nearest frame), for pinning the
+    /// liquid sky: `LiquidTodayView.liveHour` consults this when a frame is active, so a sweep of
+    /// `--demo-hour 7 / 14 / 18 / 22` captures the sky at exactly those hours even where the classic
+    /// frame list has no matching entry (e.g. 18 snaps the FRAME to 17, but the sky stays at 18).
+    /// nil whenever `active` is nil — same zero-behaviour-change gating as everything else here.
+    static private(set) var skyHour: Double?
+
     /// The ten frames, one per captured hour, ordered through the day. Hand-tuned so the stat
     /// progression reads believably as the day advances (Effort climbs and settles, HRV/RHR ebb and
     /// flow, stress peaks midday). The scene each hour resolves to is owned by `DayCycleScene`.
@@ -66,6 +73,7 @@ enum DemoDayHarness {
         guard !frames.isEmpty else { return }
         active = frames.first(where: { $0.hour == wanted })
             ?? frames.min(by: { abs($0.hour - wanted) < abs($1.hour - wanted) })
+        if active != nil { skyHour = Double(wanted) }
     }
 }
 #endif

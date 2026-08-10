@@ -77,7 +77,6 @@ struct SleepView: View {
 
     /// Draw-in fraction for the Rest hero gauge — owned here so the gauge animates the arc on appear /
     /// when the sleep-performance score changes, exactly as TodayView drives its rings. Presentation-only.
-    @State private var heroFraction: Double = 0
 
     /// Non-nil while the wake-time editor sheet is open. Carries the night's stable key (`startTs`) and
     /// current wake time so the editor seeds its picker; saving routes through `repo.editSleepWakeTime`,
@@ -121,7 +120,7 @@ struct SleepView: View {
         // synchronously, so the very first frame already shows content (no empty-state flash).
         let key = dataKey
         let resolved: SleepModel? = (key == modelKey) ? model : buildModel()
-        ScreenScaffold(title: "Sleep", subtitle: "Last night, read in two seconds.",
+        ScreenScaffold(title: "Sleep",
                        // PERF (scroll): lazy column — byte-identical layout (LazyVStack == eager VStack
                        // alignment/spacing/header), builds trailing trend/ledger cards on demand. Combined
                        // with dropping the top-level LiveState observation (the sleep-mark card + the
@@ -129,13 +128,15 @@ struct SleepView: View {
                        // re-evaluates this heavy body.
                        onRefresh: { await repo.refresh() },
                        lazy: true,
-                       topBackground: liquidScaffoldSky()) {
+                       topBackground: liquidScaffoldSky(),
+                       // The mockup's sleep sky hero: the night's numbers live IN the sky band (kicker →
+                       // big thin duration + score), not in a card below — see `skyHero`.
+                       hero: skyHero(resolved)) {
             Group {
                 if let resolved {
                     // Each top-level section fades + rises in sequence on first appear (Reduce-Motion safe).
                     VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
                         if let sleepUndo { sleepUndoBanner(sleepUndo) }
-                        restHero(resolved).staggeredAppear(index: 0)
                         SleepMarkCard().staggeredAppear(index: 1)
                         hero(resolved).staggeredAppear(index: 2)
                         metricGrid(resolved).staggeredAppear(index: 3)
@@ -146,14 +147,6 @@ struct SleepView: View {
                 } else {
                     emptyState
                 }
-            }
-            // Animate the Rest hero gauge in once content resolves, and re-draw when the
-            // sleep-performance score changes (a sync / re-import). macOS-13-safe single-param onChange.
-            .onChangeCompat(of: heroScoreFraction(resolved)) { newFraction in
-                withAnimation(.easeOut(duration: 0.9)) { heroFraction = newFraction }
-            }
-            .onAppear {
-                withAnimation(.easeOut(duration: 0.9)) { heroFraction = heroScoreFraction(resolved) }
             }
             // Persist the freshly-built model so subsequent renders with the same inputs hit
             // the cache. Writing State during body is not allowed, so commit it after layout;
@@ -356,92 +349,46 @@ struct SleepView: View {
         return AnalyticsEngine.Rest.composite(daily: daily)
     }
 
-    /// The fill fraction (0…1) the Rest hero gauge animates to — the DISPLAYED night's sleep-
-    /// performance score over 100. 0 when no score exists (the headline-hours hero shows instead).
-    /// Cheap, so it's read every render to drive the draw-in animation; keyed off the navigated
-    /// night so the vessel re-animates as you browse ◀/▶.
-    private func heroScoreFraction(_ model: SleepModel?) -> Double {
-        guard let model, let p = performanceScore(for: heroNight(model)) else { return 0 }
-        return min(max(p / 100.0, 0), 1)
-    }
-
-    /// The Rest world's opening: a scenic indigo backdrop with — when the night carries a 0–100
-    /// sleep-performance score — the canonical liquid `LiquidVessel` in the Rest tint with the score
-    /// counting up over it (the SAME hero language Today's score cells and the Trends headline use);
-    /// otherwise a big SF-Rounded hours-slept headline over the same backdrop. A `SourceBadge` states
-    /// whether the score is WHOOP's own imported figure or NOOP's on-device estimate. Presentation-only
-    /// — the score is `performanceScore(for:)` on the ◀/▶-navigated `heroNight`, so the hero tracks the
-    /// same night the hypnogram shows (was pinned to `performance.latest` = last night regardless).
-    @ViewBuilder
-    private func restHero(_ model: SleepModel) -> some View {
+    /// The mockup's sleep sky hero, rendered inside the scaffold's sky band: a quiet all-caps
+    /// kicker (which night · its clock window · provenance) over the big thin asleep-duration
+    /// numeral with the 0–100 score beside it — the "say the number" half; the sheet below says
+    /// what it means. All values are the REAL navigated night's own (same `heroNight` /
+    /// `performanceScore(for:)` reads the old ring card used).
+    private func skyHero(_ model: SleepModel?) -> AnyView? {
+        guard let model else { return nil }
         let night = heroNight(model)
         let score = performanceScore(for: night)
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Sleep performance", overline: nightRelativeLabel, trailing: String(localized: "Rest"))
-            // A subtle night atmosphere sits behind the sleep hero ONLY (the Rest world's whisper:
-            // faint indigo wash + crescent moon over the near-black canvas, no glow), clipped to the
-            // card. Replaces the now-flat ScenicHeroBackground here.
-            VStack(spacing: NoopMetrics.space4) {
-                if let score {
-                    // The signature liquid gauge: a filling vessel tinted Rest, with the 0–100 score
-                    // counting up over it and a short state word beneath. The vessel fills to the SAME
-                    // animated `heroFraction` the screen already drives on appear / on score change, so
-                    // the arc draw-in and the number roll-up land together (Today's HeroScoreCell idiom).
-                    VStack(spacing: NoopMetrics.space3) {
-                        ZStack {
-                            HearthProgressRing(fraction: heroFraction, lineWidth: 6,
-                                               trackColor: StrandPalette.hairlineStrong,
-                                               fillColor: StrandPalette.restColor, animated: false)
-                                .frame(width: 184, height: 184)
-                            VStack(spacing: 0) {
-                                CountUpText(
-                                    value: score,
-                                    format: { "\(Int($0.rounded()))" },
-                                    font: StrandFont.rounded(52),
-                                    color: StrandPalette.textPrimary
-                                )
-                                .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
-                                Text("of 100")
-                                    .font(StrandFont.caption)
-                                    .foregroundStyle(StrandPalette.textSecondary)
-                            }
-                            .allowsHitTesting(false)   // taps fall through to the vessel → splash
-                        }
-                        Text(sleepScoreWord(score))
-                            .font(StrandFont.subhead.weight(.semibold))
-                            .foregroundStyle(StrandPalette.restColor)
+        let kicker = "\(nightRelativeText) · \(night.onsetText) – \(night.wakeText) · \(nightSource(night))"
+        return AnyView(
+            VStack(alignment: .leading, spacing: 12) {
+                Text(kicker.uppercased())
+                    .font(StrandFont.overlineScaled(10)).tracking(2.2)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .lineLimit(1).minimumScaleFactor(0.8)
+                HStack(alignment: .firstTextBaseline, spacing: 14) {
+                    Text(durationText(night.stages.asleep))
+                        // Mockup's big-number role: Sans 200 (ExtraLight) at ~54px, −0.04em. Now a real
+                        // 200 (ExtraLight static bundled), not the previous Regular floor.
+                        .font(StrandFont.number(52, weight: .thin))
+                        .tracking(-2.1)
+                        .foregroundStyle(.white)
+                    if let score {
+                        Text("Sleep \(Int(score.rounded())) · \(sleepScoreWord(score))")
+                            .font(StrandFont.body)
+                            .foregroundStyle(.white.opacity(0.65))
                     }
-                    .padding(.top, NoopMetrics.space1)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Sleep performance \(Int(score.rounded())) of 100")
-                } else {
-                    // No 0–100 score for the night — lead with hours slept as a big rounded headline
-                    // whose minutes tick up on appear (the same count-up the scored hero gets).
-                    VStack(spacing: NoopMetrics.space1) {
-                        CountUpText(
-                            value: night.stages.asleep,
-                            format: { durationText($0) },
-                            font: StrandFont.number(46),
-                            color: StrandPalette.restBright
-                        )
-                        Text("asleep last night")
-                            .font(StrandFont.subhead)
-                            .foregroundStyle(StrandPalette.textSecondary)
-                    }
-                    .padding(.vertical, NoopMetrics.space5)
-                    .accessibilityElement(children: .combine)
                 }
-                SourceBadge(score != nil ? heroSource(for: night) : (repo.activeDeviceIsOura ? "Oura" : "On-device"), tint: StrandPalette.restColor)
             }
-            .padding(NoopMetrics.cardInnerPadding + NoopMetrics.space1)
-            .frame(maxWidth: .infinity)
-            // TimeOfDayBackground's sun/moon-and-stars wash was tuned for the old dark navy canvas —
-            // painted over Hearth's warm cream surfaceBase it read as a muddy grey box (user-reported).
-            // Every other card on this screen is a plain warm surface; the ring itself already carries
-            // the Rest identity, so this hero doesn't need its own atmosphere.
-            .background(StrandPalette.surfaceRaised)
-            .clipShape(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
-        }
+            .padding(.top, 2)
+            .accessibilityElement(children: .combine)
+        )
+    }
+
+    /// `nightRelativeLabel` as a plain String for the composed kicker line.
+    private var nightRelativeText: String {
+        nightOffset == 0 ? String(localized: "Last night")
+            : (nightOffset == 1 ? String(localized: "1 night ago")
+               : String(localized: "\(nightOffset) nights ago"))
     }
 
     /// A short Rest state word for the hero gauge — same banding the synthesis hero uses.

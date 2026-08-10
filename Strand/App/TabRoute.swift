@@ -30,6 +30,8 @@ enum TabRoute: Hashable {
     case metricExplorer
     case workouts
     case dataSources
+    /// The sync page (Hearth 7c) — the destination behind the Today sky's sync status line.
+    case syncStatus
     case stress
     case sleep
     case health
@@ -66,6 +68,7 @@ extension View {
             case .metricExplorer: MetricExplorerView()
             case .workouts: WorkoutsView()
             case .dataSources: DataSourcesView()
+            case .syncStatus: SyncPageView()
             case .stress: StressView()
             case .sleep: SleepView()
             case .health: HealthView()

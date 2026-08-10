@@ -183,8 +183,10 @@ struct CoupledView: View {
                     SectionHeader("Recovery", overline: "Coupled read")
                         .frame(maxWidth: .infinity, alignment: .leading)
                     ZStack {
-                        LiquidVessel(value: recovery.map { max(0, min(1, $0 / 100)) },
-                                     tint: StrandPalette.chargeColor, animated: recovery != nil)
+                        HearthProgressRing(fraction: recovery.map { max(0, min(1, $0 / 100)) },
+                                           lineWidth: 6,
+                                           trackColor: StrandPalette.chargeColor.opacity(0.18),
+                                           fillColor: StrandPalette.chargeColor, animated: recovery != nil)
                             // A carried (not-yet-rescored) morning reads dimmed, the Today #802 idiom.
                             .opacity(isCarryingRecovery ? 0.85 : 1)
                             .frame(width: 200, height: 200)
@@ -218,15 +220,13 @@ struct CoupledView: View {
                 CountUpText(value: r,
                             format: { "\(Int($0.rounded()))%" },
                             font: StrandFont.number(48),
-                            color: .white)
-                    .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
+                            color: StrandPalette.textPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
             } else {
                 Text("—")
                     .font(StrandFont.number(48))
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
+                    .foregroundStyle(StrandPalette.textPrimary)
             }
             Text("RECOVERY")
                 .font(StrandFont.overline)
@@ -299,20 +299,21 @@ struct CoupledView: View {
                     // Left: the liquid vessel filled to the 0–21 Day-Strain fraction (Effort world), with the
                     // strain value counting up over the fluid — the coupled read on the classic 0–21 axis.
                     ZStack {
-                        LiquidVessel(value: dayStrain21.map { max(0, min(1, $0 / 21)) },
-                                     tint: StrandPalette.effortColor, animated: dayStrain21 != nil)
+                        HearthProgressRing(fraction: dayStrain21.map { max(0, min(1, $0 / 21)) },
+                                           lineWidth: 6,
+                                           trackColor: StrandPalette.effortColor.opacity(0.18),
+                                           fillColor: StrandPalette.effortColor, animated: dayStrain21 != nil)
                             .frame(width: 148, height: 148)
                         Group {
                             if let s = dayStrain21 {
                                 CountUpText(value: s,
                                             format: { String(format: "%.1f", $0) },
                                             font: StrandFont.number(34),
-                                            color: .white)
+                                            color: StrandPalette.textPrimary)
                             } else {
-                                Text("—").font(StrandFont.number(34)).foregroundStyle(.white)
+                                Text("—").font(StrandFont.number(34)).foregroundStyle(StrandPalette.textPrimary)
                             }
                         }
-                        .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
                         .lineLimit(1).minimumScaleFactor(0.5)
                         .allowsHitTesting(false)
                     }
@@ -406,15 +407,16 @@ struct CoupledView: View {
                         // Left: the SLEEP PERFORMANCE % as the liquid vessel (Rest world), with the score
                         // counting up over the fluid. Empty vessel when there's no scored performance.
                         ZStack {
-                            LiquidVessel(value: sleepPerformance.map { max(0, min(1, $0 / 100)) },
-                                         tint: StrandPalette.restColor, animated: false)
+                            HearthProgressRing(fraction: sleepPerformance.map { max(0, min(1, $0 / 100)) },
+                                               lineWidth: 5,
+                                               trackColor: StrandPalette.restColor.opacity(0.18),
+                                               fillColor: StrandPalette.restColor, animated: false)
                                 .frame(width: 88, height: 88)
                             if let p = sleepPerformance {
                                 CountUpText(value: p,
                                             format: { "\(Int($0.rounded()))" },
                                             font: StrandFont.number(24),
-                                            color: .white)
-                                    .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
+                                            color: StrandPalette.textPrimary)
                                     .allowsHitTesting(false)
                             }
                         }

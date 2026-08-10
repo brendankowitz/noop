@@ -160,11 +160,10 @@ struct HRVSnapshotView: View {
 
                 Circle()
                     .trim(from: 0, to: captureFraction)
-                    .stroke(
-                        AngularGradient(colors: [StrandPalette.restDeep, StrandPalette.restBright],
-                                        center: .center),
-                        style: StrokeStyle(lineWidth: 10, lineCap: .round)
-                    )
+                    // Hearth: a FLAT rest-tone arc (skies are the only gradients), round-capped over
+                    // the faint rest track above. Was a restDeep→restBright AngularGradient sweep.
+                    .stroke(StrandPalette.restBright,
+                            style: StrokeStyle(lineWidth: 10, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .frame(width: d, height: d)
                     .animation(.easeInOut(duration: 0.4), value: captureFraction)

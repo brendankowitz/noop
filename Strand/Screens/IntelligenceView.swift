@@ -152,7 +152,10 @@ struct IntelligenceView: View {
                     // 0–100 estimate counting up over it and the ± band + state word beneath (Sleep's
                     // restHero idiom). Live so the fill actually flows on the hero surface.
                     ZStack {
-                        LiquidVessel(value: frac, tint: StrandPalette.recoveryColor(f.charge), animated: true)
+                        let chargeTint = StrandPalette.recoveryColor(f.charge)
+                        HearthProgressRing(fraction: frac, lineWidth: 6,
+                                           trackColor: chargeTint.opacity(0.18), fillColor: chargeTint,
+                                           animated: true)
                             .frame(width: 184, height: 184)
                         VStack(spacing: 0) {
                             CountUpText(
@@ -254,7 +257,9 @@ struct IntelligenceView: View {
                     // (posed) so each day row costs a single cached frame, not a live canvas. Only shown
                     // once the night has a Charge to fill it; a calibrating night leads with the date alone.
                     if let r = d.recovery {
-                        LiquidVessel(value: min(1, max(0, r / 100)), tint: StrandPalette.recoveryColor(r), animated: false)
+                        let rTint = StrandPalette.recoveryColor(r)
+                        HearthProgressRing(fraction: min(1, max(0, r / 100)), lineWidth: 3,
+                                           trackColor: rTint.opacity(0.18), fillColor: rTint, animated: false)
                             .frame(width: 24, height: 24)
                             .accessibilityHidden(true)
                     }

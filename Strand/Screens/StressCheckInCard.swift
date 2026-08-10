@@ -48,16 +48,16 @@ struct StressCheckInCard: View {
 
     var body: some View {
         if let nudge = center.pending {
-            StrandCard(tint: StrandPalette.restColor) {
+            // Hearth "Alert" card: flat clay, no shadow, no tint wash — the same flagged surface the
+            // illness banner uses. Clay already reads as "this is a flag, not a verdict", which is why
+            // the second disclaimer paragraph that used to close this card is gone; the honest
+            // RMSSD-vs-baseline line below (real numbers from the engine) stays.
+            AlertCard {
                 VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
                     HStack(spacing: NoopMetrics.space2) {
-                        Image(systemName: "wind")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(StrandPalette.restBright)
-                            .accessibilityHidden(true)
                         Text("Stress check-in").strandOverline()
                         Spacer()
-                        StatePill("Passive", tone: .neutral, showsDot: true)
+                        StatePill("Passive", tone: .neutral, showsDot: false)
                     }
 
                     Text("Your HRV dipped while you were still. Want a minute to breathe?")
@@ -85,11 +85,6 @@ struct StressCheckInCard: View {
                             center.dismiss()
                         }
                     }
-
-                    Text("Relaxation guidance from your own numbers: not a health alert, and not a diagnosis. Trends matter more than any single number.")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .transition(.opacity)

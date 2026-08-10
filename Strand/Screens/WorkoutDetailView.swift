@@ -471,9 +471,11 @@ struct WorkoutDetailView: View {
             NoopCard(tint: StrandPalette.effortColor) {
                 HStack(alignment: .center, spacing: 18) {
                     ZStack {
-                        // Static (posed) vessel — a compact liquid gauge inside a card, so it costs a single
-                        // cached frame rather than a live canvas (same call as Trends' pip vessels).
-                        LiquidVessel(value: fraction, tint: StrandPalette.effortColor, animated: false)
+                        // Flat Hearth ring — a compact score readout inside the card (same idiom as the
+                        // Workouts Typical-Effort hero and Trends' pip rows).
+                        HearthProgressRing(fraction: fraction, lineWidth: 5,
+                                           trackColor: StrandPalette.effortColor.opacity(0.18),
+                                           fillColor: StrandPalette.effortColor, animated: false)
                             .frame(width: 88, height: 88)
                         VStack(spacing: 0) {
                             // The session's Effort contribution ticks up to its value — the NOOP signature.

@@ -474,8 +474,9 @@ struct CompareView: View {
                     // window (the same 0–1 position the overlay's "now" end-cap sits at) — the liquid
                     // accent tying the legend to the real series. Static, decorative (the min/max text
                     // + colour swatch carry the meaning for VoiceOver).
-                    LiquidVessel(value: s.rows.last.map { s.normalized($0.value) },
-                                 tint: s.color, animated: false)
+                    HearthProgressRing(fraction: s.rows.last.map { s.normalized($0.value) },
+                                       lineWidth: 3, trackColor: s.color.opacity(0.18),
+                                       fillColor: s.color, animated: false)
                         .frame(width: 22, height: 22)
                         .accessibilityHidden(true)
                     RoundedRectangle(cornerRadius: 2, style: .continuous)
@@ -596,7 +597,8 @@ struct CompareView: View {
                     // magnitude — not a health value), tinted by the relationship's own colour. Static
                     // (posed) so a page of pair cards costs one cached frame each, matching Today's small
                     // vessels. Decorative — the r read-out + sentence carry the meaning for VoiceOver.
-                    LiquidVessel(value: min(abs(p.r), 1), tint: tint, animated: false)
+                    HearthProgressRing(fraction: min(abs(p.r), 1), lineWidth: 3,
+                                       trackColor: tint.opacity(0.18), fillColor: tint, animated: false)
                         .frame(width: 30, height: 30)
                         .accessibilityHidden(true)
                     // Two color swatches for the pair.

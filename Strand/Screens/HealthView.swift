@@ -24,8 +24,15 @@ struct HealthView: View {
     // MARK: - Body
 
     var body: some View {
-        ScreenScaffold(title: "Health Monitor",
-                       subtitle: "Live vitals, streamed from the strap.",
+        ScreenScaffold(title: "Health",
+                       // The header's serif statement is the app's OWN synthesis sentence, not new copy:
+                       // `ReadinessEngine.evaluate(...).summary` is the same real, on-device read Today's
+                       // hero/Synthesis card shows (LiquidTodayView.synthLine reuses the identical engine).
+                       // Called with no `today:` anchor — the engine's documented default (the most recent
+                       // stored row), which is exactly how the vitals below resolve their own values, so
+                       // header and rows always talk about the same night. Nothing here is fabricated: with
+                       // no history the engine returns its own honest "wear the strap for a few nights" line.
+                       subtitle: LocalizedStringKey(headlineStatement),
                        // PERF (scroll): lazy column — byte-identical layout (LazyVStack == eager VStack
                        // alignment/spacing/header); builds the trailing vitals/skin-temp/age sections on
                        // demand instead of all up-front.
@@ -33,7 +40,8 @@ struct HealthView: View {
                        lazy: true,
                        // Flat ink, not the sky — Health reads as archive, not a lived moment (see the
                        // identical rationale in TrendsView.swift).
-                       topBackground: liquidFlatInkBackground()) {
+                       topBackground: liquidFlatInkBackground(),
+                       hero: AnyView(HealthHeaderHero())) {
             if repo.days.isEmpty {
                 // First run / no history: whether to show the empty state or the full live stack depends
                 // on whether a strap is streaming live HR — a `live`-dependent choice. It's isolated to
@@ -46,6 +54,61 @@ struct HealthView: View {
                 HealthSectionsStack()
             }
         }
+    }
+
+    /// The header band's serif line — see the call site's note. `evaluate` is memoized inside
+    /// `ReadinessEngine` on a fingerprint of the rows, so reading it per body pass does not re-scan
+    /// the history.
+    private var headlineStatement: String {
+        ReadinessEngine.evaluate(days: repo.days).summary
+    }
+}
+
+// MARK: - Header hero (the flat-ink band's big number)
+
+/// The mockup's header numeral: the latest resolved HRV, read through the SAME source-precedence
+/// resolution (`BodyVitalSigns.readings`) the vital rows below use, so the big number and the "Heart-rate
+/// variability" row can never disagree. The caption names the real day the value came from rather than
+/// asserting "last night"; with no HRV anywhere it shows an em-dash and the reading's own missing caption.
+private struct HealthHeaderHero: View {
+    @EnvironmentObject var repo: Repository
+
+    // Same temperature preference plumbing `VitalsSection` uses — `readings` needs it to build the
+    // skin-temp entry even though this hero only reads HRV.
+    @AppStorage(UnitPrefs.systemKey) private var unitSystemRaw = UnitSystem.metric.rawValue
+    @AppStorage(UnitPrefs.temperatureKey) private var temperatureRaw = ""
+    private var temperatureUnit: TemperatureUnit {
+        let system = UnitSystem(rawValue: unitSystemRaw) ?? .metric
+        return UnitPrefs.resolveTemperature(system: system, override: temperatureRaw)
+    }
+
+    var body: some View {
+        let hrv = BodyVitalSigns.readings(sourceRows: repo.vitalMetricRows,
+                                          temperatureUnit: temperatureUnit)
+            .first { $0.key == "hrv" }
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(hrv?.value.map { String(Int($0.rounded())) } ?? "—")
+                .font(StrandFont.display(46))
+                .tracking(StrandFont.displayTracking(46))
+                .foregroundStyle(StrandPalette.onDarkPrimary)
+            Text(caption(hrv))
+                .font(StrandFont.subhead)
+                .foregroundStyle(StrandPalette.onDarkTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 4)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// "ms HRV · Today" when there's a value (the day label is the reading's own real day), else the
+    /// reading's honest missing caption.
+    private func caption(_ hrv: BodyVitalReading?) -> String {
+        guard let hrv, hrv.value != nil else {
+            return hrv?.stateCaption ?? String(localized: "No HRV value yet")
+        }
+        guard let day = hrv.day else { return String(localized: "ms HRV") }
+        return String(localized: "ms HRV · \(BodyVitalReading.dayLabel(day))")
     }
 }
 
@@ -790,11 +853,14 @@ private struct FitnessAgeSection: View {
                     // filled by how young the fitness age reads (younger = fuller), with the age counting
                     // up over it. Same HeroScoreCell idiom as Today; taps fall through to the trend button.
                     ZStack {
-                        LiquidVessel(value: fitnessAgeFraction(age), tint: StrandPalette.chargeColor, animated: true)
+                        HearthProgressRing(fraction: fitnessAgeFraction(age), lineWidth: 5,
+                                           trackColor: StrandPalette.chargeColor.opacity(0.18),
+                                           fillColor: StrandPalette.chargeColor, animated: true)
                             .frame(width: 96, height: 96)
+                        // Flat ring has no dark backing disc, so the numeral reads in textPrimary on the
+                        // cream card (the Workouts Typical-Effort hero treatment).
                         CountUpNumber(value: Double(shown), font: StrandFont.rounded(30))
-                            .foregroundStyle(.white)
-                            .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
+                            .foregroundStyle(StrandPalette.textPrimary)
                             .allowsHitTesting(false)
                     }
                     VStack(alignment: .leading, spacing: NoopMetrics.space1) {
@@ -1108,12 +1174,14 @@ private struct VitalitySection: View {
                 VStack(alignment: .leading, spacing: NoopMetrics.space1) {
                     Text("Vitality").strandOverline()
                     ZStack {
-                        LiquidVessel(value: max(0, min(1, v / 100)), tint: StrandPalette.chargeColor, animated: true)
+                        HearthProgressRing(fraction: max(0, min(1, v / 100)), lineWidth: 5,
+                                           trackColor: StrandPalette.chargeColor.opacity(0.18),
+                                           fillColor: StrandPalette.chargeColor, animated: true)
                             .frame(width: 108, height: 108)
                         VStack(spacing: 0) {
+                            // Flat ring → numeral in textPrimary on the cream card (no dark disc behind it).
                             CountUpNumber(value: v, font: StrandFont.rounded(38))
-                                .foregroundStyle(.white)
-                                .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
+                                .foregroundStyle(StrandPalette.textPrimary)
                             Text("of 100").font(StrandFont.caption).foregroundStyle(StrandPalette.textSecondary)
                         }
                         .allowsHitTesting(false)
@@ -1178,10 +1246,23 @@ private struct VitalitySection: View {
 
 // MARK: - Vitals grid (uniform StatTiles)
 
-/// Static vitals grid, split into its own view so it depends only on `repo` and is
+/// Static vitals list, split into its own view so it depends only on `repo` and is
 /// not re-rendered by the ~1Hz live HR stream.
+///
+/// The mockup's Health page is two divided list cards — "Cardiac" (resting HR / HRV / blood oxygen) and
+/// "Overnight" (respiratory rate / skin temperature) — so the tile grid is now a pair of `GroupCard`s of
+/// `GroupRow`s. Every value, banding caption, sparkline and accessibility label is the SAME resolved
+/// `BodyVitalReading` the tiles read; only the container changed. A reading with no value keeps its honest
+/// empty state (the mockup's muted "Not measured", with the reading's own reason as the subtitle) — it is
+/// never a fabricated number. Rows whose metric exists in `MetricCatalog` gained the mockup's chevron and
+/// open that metric's real trend (`MetricDetailView`), the same sheet idiom `FitnessAgeSection` above uses;
+/// raw SpO₂ has no catalog metric, so it honestly gets no chevron.
 private struct VitalsSection: View {
     @EnvironmentObject var repo: Repository
+
+    /// The tapped row's metric trend, presented as a sheet (these shared screens aren't hosted in a
+    /// per-screen NavigationStack — same reason `FitnessAgeSection` uses a sheet for its trend).
+    @State private var detailMetric: MetricDescriptor?
 
     // Temperature display preference (D#103). Skin temp is stored in °C (absolute or a ±deviation); the
     // toggle re-labels it to °F. Display-only — banding still runs on the stored °C value.
@@ -1204,20 +1285,11 @@ private struct VitalsSection: View {
         )
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             SectionHeader("Vital Signs", overline: "Latest", trailing: BodyVitalSigns.latestDayLabel(readings))
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 168), spacing: NoopMetrics.gap)],
-                alignment: .leading,
-                spacing: NoopMetrics.gap
-            ) {
-                ForEach(Array(readings.enumerated()), id: \.element.id) { idx, v in
-                    // Each headline vital is now a liquid tile: the signature LiquidVessel gauge tinted
-                    // to the metric's colour world (rose RHR, purple HRV, cyan SpO₂, amber skin temp),
-                    // filled to the metric's fraction, with the value counting up beside it and the same
-                    // banding caption + sparkline the classic tile carried. Every binding + accessibility
-                    // label is preserved — this is the liquid restyle of the flat StatTile.
-                    LiquidVitalTile(reading: v)
-                        .staggeredAppear(index: idx)
-                }
+            GroupCard("Cardiac") {
+                ForEach(ordered(["rhr", "hrv", "spo2"], from: readings)) { vitalRow($0) }
+            }
+            GroupCard("Overnight") {
+                ForEach(ordered(["resp", "skin", "spo2raw"], from: readings)) { vitalRow($0) }
             }
             Text("Once NOOP has 14 nights of history, in-range compares each vital to your own baseline (approximate, not medical advice); until then, typical adult ranges apply.")
                 .font(StrandFont.footnote)
@@ -1236,79 +1308,73 @@ private struct VitalsSection: View {
             let pts = await repo.exploreSeries(key: "spo2_candidate", source: "my-whoop", days: 14)
             spo2CandidateByDay = Dictionary(pts.map { ($0.day, $0.value) }, uniquingKeysWith: { a, _ in a })
         }
+        .sheet(item: $detailMetric) { m in
+            NavigationStack { MetricDetailView(metric: m) }
+            #if os(macOS)
+            .frame(width: 900, height: 820)
+            #endif
+        }
     }
-}
 
-// MARK: - Liquid vital tile (vessel gauge + count-up value + banding caption + spark trail)
+    /// The readings for `keys`, in the order the mockup lists them (the resolver returns its own fixed
+    /// order). A key with no reading simply drops out, so the card never renders an empty row.
+    private func ordered(_ keys: [String], from readings: [BodyVitalReading]) -> [BodyVitalReading] {
+        keys.compactMap { key in readings.first { $0.key == key } }
+    }
 
-/// One headline vital sign rendered in the liquid finish: a metric-tinted `LiquidVessel` gauge (filled
-/// to the vital's physiological fraction), the value counting up beside it, the banded state caption, and
-/// the same sparkline trail the classic StatTile drew. A frosted `NoopCard` tinted to the metric's accent,
-/// matching Today's Key-Metrics tiles. Presentation-only: value, banding and source are unchanged — this
-/// just gives each vital a real liquid gauge instead of a flat tile.
-private struct LiquidVitalTile: View {
-    let reading: BodyVitalReading
-
-    var body: some View {
-        NoopCard(padding: 14, tint: reading.accent) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("\(reading.label)").strandOverline()
-                Spacer(minLength: 8)
-                HStack(alignment: .center, spacing: 10) {
-                    // The signature liquid gauge — static (posed) so a grid of them doesn't each run a live
-                    // 30fps Canvas. nil fraction (no value) reads as an empty vessel, no fabricated fill.
-                    LiquidVessel(value: vesselFraction, tint: reading.metricColor, animated: false)
-                        .frame(width: 34, height: 34)
-                    if let value = reading.value {
-                        // The value counts up on appear (snaps under Reduce Motion), formatted exactly as
-                        // the classic tile did (the reading's own formatter + unit), so it's byte-identical.
-                        CountUpText(value: value,
-                                    format: { "\(reading.format($0)) \(reading.unit)" },
-                                    font: StrandFont.number(24),
-                                    color: reading.accent)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.6)
-                    } else {
-                        Text("—").font(StrandFont.number(24)).foregroundStyle(reading.accent)
-                    }
-                    Spacer(minLength: 0)
-                }
-                #if !os(watchOS)
-                if let sparkline = reading.sparkline, sparkline.count > 1 {
-                    Sparkline(values: sparkline, gradient: Gradient(colors: [reading.metricColor.opacity(0.5), reading.metricColor]))
-                        .frame(height: 22).padding(.top, 6)
-                        .accessibilityHidden(true)
-                }
-                #endif
-                Text(reading.stateCaption)
-                    .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary).lineLimit(1)
-                    .padding(.top, 4)
+    /// One vital as a `GroupRow`: value + banding caption + the same sparkline trail the tile drew, with a
+    /// chevron into the metric's trend where one exists. `contentShape` + the row's own frame keep the whole
+    /// row tappable (`GroupRow` already sets `.contentShape(Rectangle())` for exactly this reason).
+    @ViewBuilder private func vitalRow(_ r: BodyVitalReading) -> some View {
+        let metric = Self.catalogMetric(for: r.key)
+        Button {
+            if let metric { detailMetric = metric }
+        } label: {
+            GroupRow(title: LocalizedStringKey(r.label),
+                     subtitle: LocalizedStringKey(r.stateCaption),
+                     // The mockup's muted "Not measured" IS this reading's real empty state; the row's
+                     // subtitle carries the reading's own reason (e.g. "Raw counts only — needs an import").
+                     value: r.formattedValue ?? String(localized: "Not measured"),
+                     valueColor: r.value == nil ? StrandPalette.textTertiary : r.accent,
+                     showsChevron: metric != nil) {
+                trail(r)
             }
         }
-        .frame(minHeight: NoopMetrics.tileHeight, maxHeight: .infinity)
+        .buttonStyle(.plain)
+        .disabled(metric == nil)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(reading.accessibilityText)
+        .accessibilityLabel(r.accessibilityText)
     }
 
-    /// The vessel's fill (0…1): the vital's value mapped onto its physiological span, matching Today's
-    /// per-metric `fracOver` denominators (HRV/120, RHR/100, respiratory/24, SpO₂ across 90…100, absolute
-    /// skin temp across 33…38 °C). nil when there's no value, so the gauge reads empty rather than faked.
-    private var vesselFraction: Double? {
-        guard let v = reading.value else { return nil }
-        func over(_ span: Double) -> Double { max(0.02, min(1, v / span)) }
-        func across(_ lo: Double, _ hi: Double) -> Double { max(0.02, min(1, (v - lo) / (hi - lo))) }
-        switch reading.key {
-        case "hrv":        return over(120)
-        case "rhr":        return over(100)
-        case "resp_rate":  return over(24)
-        case "spo2":       return across(90, 100)
-        case "spo2raw":    return across(0, 65535)   // raw PPG ADC mean over the u16 sensor span (#93)
-        case "skin_temp":
-            // Absolute skin temp (>= 20 °C) maps across a plausible wrist band; a small ±deviation
-            // maps around a half-full centre so a normal night reads mid-gauge, not empty.
-            return VitalBands.isAbsoluteSkinTemp(v) ? across(33, 38) : max(0.02, min(1, 0.5 + v / 4))
-        default:           return across(0, max(1, v * 1.5))
+    /// The compact sparkline trail, kept from the tile so the row still carries the vital's real recent
+    /// history rather than losing it to the restyle. Decorative (the value + caption say everything).
+    @ViewBuilder private func trail(_ r: BodyVitalReading) -> some View {
+        #if !os(watchOS)
+        if let values = r.sparkline, values.count > 1 {
+            Sparkline(values: values,
+                      gradient: Gradient(colors: [r.metricColor.opacity(0.45), r.metricColor]),
+                      lineWidth: 1.5, showsArea: false, showsHead: false, showsHover: false)
+                .frame(width: 46, height: 18)
+                .accessibilityHidden(true)
         }
+        #endif
+    }
+
+    /// The catalog metric a vital row taps through to. The reading keys and the catalog keys are spelled
+    /// differently for two of them ("resp"/"resp_rate", "skin"/"skin_temp"); raw SpO₂ is a device-dependent
+    /// ADC with no catalog metric (#93), so it returns nil and its row stays untappable.
+    private static func catalogMetric(for readingKey: String) -> MetricDescriptor? {
+        let catalogKey: String?
+        switch readingKey {
+        case "rhr":  catalogKey = "rhr"
+        case "hrv":  catalogKey = "hrv"
+        case "spo2": catalogKey = "spo2"
+        case "resp": catalogKey = "resp_rate"
+        case "skin": catalogKey = "skin_temp"
+        default:     catalogKey = nil
+        }
+        guard let catalogKey else { return nil }
+        return MetricCatalog.metric(key: catalogKey, source: Repository.whoopSource)
     }
 }
 

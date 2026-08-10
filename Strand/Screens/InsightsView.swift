@@ -1066,7 +1066,9 @@ struct InsightsView: View {
                 // the sign-aware tint, the leading-gauge idiom Today uses, so the strength reads at a glance.
                 HStack(alignment: .center) {
                     HStack(spacing: 10) {
-                        LiquidVessel(value: min(1, abs(e.cohensD) / 0.8), tint: tintColor, animated: false)
+                        HearthProgressRing(fraction: min(1, abs(e.cohensD) / 0.8), lineWidth: 3,
+                                           trackColor: tintColor.opacity(0.18), fillColor: tintColor,
+                                           animated: false)
                             .frame(width: 26, height: 26)
                             .accessibilityHidden(true)
                         Text(e.behavior)
@@ -1298,7 +1300,8 @@ struct InsightsView: View {
                 // Liquid magnitude accent: a small filling vessel showing |r| in the correlation's
                 // strength colour, the same leading-gauge idiom Today's card rows + vitals use. Static
                 // (a small gauge doesn't need live slosh); decorative, the exact r + a11y read below.
-                LiquidVessel(value: min(1, abs(r)), tint: strength, animated: false)
+                HearthProgressRing(fraction: min(1, abs(r)), lineWidth: 3,
+                                   trackColor: strength.opacity(0.18), fillColor: strength, animated: false)
                     .frame(width: 28, height: 28)
                     .accessibilityHidden(true)
                 Text(rel.title)

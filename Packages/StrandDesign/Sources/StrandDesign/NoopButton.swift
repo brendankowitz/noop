@@ -35,7 +35,10 @@ public enum NoopButtonMetrics {
     /// Standard control height (48) — also the source for the min hit target floor.
     public static let height: CGFloat = NoopMetrics.controlHeight
     /// Corner radius (14) — softer than a card, not a pill.
-    public static let cornerRadius: CGFloat = 14
+    /// OVERRIDE POINT (bknoop fork): `var`, not `let` — a fork can round controls all the way to a
+    /// pill (radius = height/2) at launch without touching this file, the same pattern
+    /// `NoopMetrics.cardRadius` uses. Default stays upstream's 14.
+    public static var cornerRadius: CGFloat = 14
     /// Horizontal label inset.
     public static let hPadding: CGFloat = 18
     /// Spacing between a leading icon and the label.
@@ -52,36 +55,54 @@ public enum NoopButtonMetrics {
     public static let disabledOpacity: Double = 0.4
 }
 
+/// OVERRIDE POINT (bknoop fork): the primary/secondary button fill+label roles as settable `var`s,
+/// same pattern as `NoopButtonMetrics.cornerRadius`. Upstream's primary is a filled accent (sage on
+/// the fork's palette); the Hearth mockup's primary is INK (`#16150F` / `textPrimary`) with a warm
+/// off-white label — but flipping the shared `accent` token would break every other accent use, and
+/// flipping upstream's default naively would risk white-on-white under a dark scheme, so the fill is
+/// its own override token that a fork points at ink at launch. Defaults reproduce upstream exactly.
+public enum NoopButtonPalette {
+    public static var primaryFill: Color = StrandPalette.accent
+    public static var primaryLabel: Color = StrandPalette.goldDeepText
+    public static var secondaryFill: Color = StrandPalette.surfaceInset
+    public static var secondaryLabel: Color = StrandPalette.textSecondary
+    public static var destructiveFill: Color = StrandPalette.statusCritical
+    public static var destructiveLabel: Color = StrandPalette.goldDeepText
+    public static var tertiaryLabel: Color = StrandPalette.accent
+
+    /// When non-nil, the legacy gradient pill (`NoopPrimaryButtonStyle` in Components.swift) fills
+    /// with this FLAT colour instead of the gold gradient. The Hearth mockup's primary is a flat ink
+    /// pill, not a gradient; leaving this nil preserves upstream's gold-gradient primary byte-for-byte.
+    public static var primaryFlatFill: Color? = nil
+}
+
 /// Resolves a `NoopButtonKind` to its concrete fill / label / border tokens. Internal
 /// so the fill model stays in one place; both the style and the view read from here.
 struct NoopButtonAppearance {
     let fill: Color?          // nil = no fill (tertiary)
     let label: Color
     let border: Color?        // nil = no hairline edge
-    let usesPanelSurface: Bool
 
     init(_ kind: NoopButtonKind) {
         switch kind {
         case .primary:
-            fill = StrandPalette.accent
-            label = StrandPalette.goldDeepText   // designated crisp white for text on accent fills
+            fill = NoopButtonPalette.primaryFill
+            label = NoopButtonPalette.primaryLabel
             border = nil
-            usesPanelSurface = false
         case .secondary:
-            fill = nil
-            label = StrandPalette.textPrimary
+            // Inset fill, no outline — the quiet secondary reads off its slightly-sunken tone, not a
+            // hairline box (which read as outlined admin chrome on a raised-card page).
+            fill = NoopButtonPalette.secondaryFill
+            label = NoopButtonPalette.secondaryLabel
             border = nil
-            usesPanelSurface = true
         case .tertiary:
             fill = nil
-            label = StrandPalette.accent
+            label = NoopButtonPalette.tertiaryLabel
             border = nil
-            usesPanelSurface = false
         case .destructive:
-            fill = StrandPalette.statusCritical
-            label = StrandPalette.goldDeepText   // crisp white on the critical fill
+            fill = NoopButtonPalette.destructiveFill
+            label = NoopButtonPalette.destructiveLabel
             border = nil
-            usesPanelSurface = false
         }
     }
 }
@@ -96,9 +117,6 @@ private struct NoopButtonBackground: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: NoopButtonMetrics.cornerRadius, style: .continuous)
         ZStack {
-            if appearance.usesPanelSurface {
-                NoopPanelSurface(cornerRadius: NoopButtonMetrics.cornerRadius)
-            }
             if let fill = appearance.fill {
                 shape.fill(fill)
             }
@@ -137,7 +155,9 @@ public struct NoopButtonStyle: ButtonStyle {
             .font(StrandFont.headline.weight(.semibold))
             .tracking(NoopButtonMetrics.tracking)
             .lineLimit(1)
-            .minimumScaleFactor(0.9)
+            // 0.8 (was 0.9): two full-width side-by-side buttons on a compact phone ("Going to sleep"
+            // / "I'm awake") truncated at 0.9; a slightly deeper shrink keeps the label whole.
+            .minimumScaleFactor(0.8)
             .foregroundStyle(appearance.label)
             .frame(maxWidth: fullWidth ? .infinity : nil)
             .padding(.horizontal, NoopButtonMetrics.hPadding)

@@ -508,13 +508,17 @@ struct TrendsView: View {
                 .textCase(.uppercase)
                 .foregroundStyle(StrandPalette.textSecondary)
             HStack(spacing: NoopMetrics.space3) {
-                // Static (posed) vessel — a small liquid gauge, not a live 60fps canvas, so the three
-                // in this card cost a single cached frame each (same call as Today's small vessels).
-                LiquidVessel(value: max(0, min(1, frac)), tint: tint, animated: false)
+                // Flat Hearth progress ring — the same thin-stroke score readout Today's hero cells and
+                // the Workouts Typical-Effort hero now use, replacing the old filling liquid vessel so the
+                // three scores read flat beside their count-up numerals (matching the mockup).
+                HearthProgressRing(fraction: max(0, min(1, frac)), lineWidth: 3,
+                                   trackColor: tint.opacity(0.18), fillColor: tint, animated: false)
                     .frame(width: 30, height: 30)
                     .accessibilityHidden(true)
+                // Hearth's on-paper number voice is thin (weight 300), not a bold gauge digit — the
+                // same Light numeral the mockup uses for ~25–30px values on the cream sheet.
                 CountUpText(value: value, format: format,
-                            font: StrandFont.number(30, weight: .bold),
+                            font: StrandFont.number(30, weight: .light),
                             color: StrandPalette.textPrimary)
             }
             PipBar(value: value, range: range, tint: tint)

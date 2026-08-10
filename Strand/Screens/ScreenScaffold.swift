@@ -19,7 +19,12 @@ struct ScreenScaffold<Content: View, Trailing: View>: View {
     var lazy: Bool = false
     /// Optional full-bleed view drawn behind the scroll content at the TOP of the screen (e.g. Today's
     /// day-cycle scene). Defaults to nil so other screens stay on the flat canvas; nil renders nothing.
+    /// Non-nil ALSO switches the page to the Hearth sheet layout: header (kicker + serif voice line)
+    /// in the sky/ink band, content on a cream sheet that overlaps it (radius 32 top, -26).
     var topBackground: AnyView? = nil
+    /// Optional extra header content rendered INSIDE the sky/ink band, under the title block — e.g.
+    /// Sleep's big-number night summary. Only meaningful with a non-nil `topBackground`.
+    var hero: AnyView? = nil
     /// Optional element pinned to the header's trailing edge (e.g. the strap-battery badge on Today).
     /// Defaults to `EmptyView` via the convenience init below, so other screens are unaffected.
     @ViewBuilder var trailing: () -> Trailing
@@ -44,24 +49,33 @@ struct ScreenScaffold<Content: View, Trailing: View>: View {
             // Scroll-to-top anchor (#198 follow-up): a zero-height marker pinned above the content so an
             // at-root tab re-tap can bring the screen back to the very top. Layout-neutral.
             Color.clear.frame(height: 0).id(screenScaffoldTopAnchorID)
-            column
-            #if os(iOS)
-            // Unified side margins matching the floating navigation bar so every page's cards + header line up
-            // to the same edges (2026-07-02); macOS keeps the classic 28 in the #else branch.
-            .padding(.horizontal, NoopMetrics.screenHPadding)
-            .padding(.top, 24)
-            // The tab bar floats over the scroll content, so the last card sat hidden behind it.
-            // Reserve extra bottom scroll room so every screen's final card clears the floating bar.
-            .padding(.bottom, NoopMetrics.tabBarClearance)
-            // iPad: cap the readable column, then centre it in the full-width scroll viewport.
-            // iPhone (.compact): the inner frame is .infinity/.leading, identical to before.
-            .frame(maxWidth: hSizeClass == .regular ? 700 : .infinity,
-                   alignment: hSizeClass == .regular ? .center : .leading)
-            .frame(maxWidth: .infinity, alignment: .center)
-            #else
-            .padding(28)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            #endif
+            if topBackground != nil {
+                // Hearth sheet layout: sky/ink header band + the cream sheet the content sits on.
+                sheetLayout
+                #if os(iOS)
+                .frame(maxWidth: hSizeClass == .regular ? 700 : .infinity)
+                .frame(maxWidth: .infinity, alignment: .center)
+                #endif
+            } else {
+                column
+                #if os(iOS)
+                // Unified side margins matching the liquid home (16pt) so every page's cards + header line up
+                // to the same edges (2026-07-02); macOS keeps the classic 28 in the #else branch.
+                .padding(.horizontal, 16)
+                .padding(.top, 24)
+                // The tab bar floats over the scroll content, so the last card sat hidden behind it.
+                // Reserve extra bottom scroll room so every screen's final card clears the floating bar.
+                .padding(.bottom, NoopMetrics.tabBarClearance)
+                // iPad: cap the readable column, then centre it in the full-width scroll viewport.
+                // iPhone (.compact): the inner frame is .infinity/.leading, identical to before.
+                .frame(maxWidth: hSizeClass == .regular ? 700 : .infinity,
+                       alignment: hSizeClass == .regular ? .center : .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
+                #else
+                .padding(28)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                #endif
+            }
         }
         #if os(iOS)
         // #697: stop a vertical scroll from drifting/bouncing the screen left-right. `.basedOnSize` only
@@ -96,6 +110,69 @@ struct ScreenScaffold<Content: View, Trailing: View>: View {
         }
     }
 
+    /// The Hearth sheet layout (topBackground screens): the mockup's canonical page anatomy — a
+    /// sky/ink header band holding the kicker (the screen name, small caps) + the serif voice line
+    /// (the subtitle) + optional `hero`, then the cream sheet the content column sits on, radius 32
+    /// at the top, overlapping the band by 26 so the sky reads as a moment the paper slides over.
+    private var sheetLayout: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if let title, subtitle != nil {
+                            // Kicker: the screen's name as a quiet all-caps overline...
+                            Text(title)
+                                .font(StrandFont.overlineScaled(10)).tracking(2.2)
+                                .textCase(.uppercase)
+                                .foregroundStyle(.white.opacity(0.6))
+                        }
+                        // ...and the serif voice line carries the statement. A screen with no subtitle
+                        // sets its NAME in the serif instead — still one editorial line, never bold sans.
+                        if let subtitle {
+                            Text(subtitle)
+                                .font(StrandFont.voice(27, relativeTo: .title))
+                                .lineSpacing(3)
+                                .foregroundStyle(.white)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else if let title {
+                            Text(title)
+                                .font(StrandFont.voice(30, relativeTo: .title))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                    trailing()
+                }
+                if let hero { hero }
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 24)
+            .padding(.bottom, 40 + 26) // band bottom pad + the sheet's overlap
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Group {
+                if lazy {
+                    LazyVStack(alignment: .leading, spacing: 20) { content() }
+                } else {
+                    VStack(alignment: .leading, spacing: 20) { content() }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 26)
+            #if os(iOS)
+            .padding(.bottom, NoopMetrics.tabBarClearance)
+            #else
+            .padding(.bottom, 28)
+            #endif
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                UnevenRoundedRectangle(topLeadingRadius: 32, topTrailingRadius: 32, style: .continuous)
+                    .fill(StrandPalette.surfaceBase)
+            )
+            .padding(.top, -26)
+        }
+    }
+
     /// The header + content column. `lazy` swaps the eager `VStack` for a `LazyVStack` so a long
     /// trailing `ForEach` (Intelligence "ALL") builds cards on demand instead of all at once. The
     /// alignment/spacing/header are identical in both branches, so the non-lazy path is byte-for-byte
@@ -115,15 +192,23 @@ struct ScreenScaffold<Content: View, Trailing: View>: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
+        // When a `topBackground` (the day-cycle liquid sky) sits behind the header, that band is dark in
+        // BOTH themes — so the title/subtitle must use the scheme-invariant on-dark tokens. The regular
+        // text tokens flip to dark ink in Light mode and went dark-on-dark over the sky, exactly the #1013
+        // pattern the Liquid Today hero hit (osifaind's Trends-tab sibling report). Flat-canvas screens
+        // (no topBackground) keep the theme tokens so the header reads on the light/dark surfaceBase.
+        let overSky = topBackground != nil
+        let titleColor = overSky ? StrandPalette.onDarkPrimary : StrandPalette.textPrimary
+        let subtitleColor = overSky ? StrandPalette.onDarkSecondary : StrandPalette.textSecondary
+        return HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 if let title {
                     // Match the liquid home's title face (SF Rounded 28) so every page's header reads
                     // identically (2026-07-02 cohesion pass).
-                    Text(title).font(StrandFont.rounded(28)).foregroundStyle(StrandPalette.textPrimary)
+                    Text(title).font(StrandFont.rounded(28)).foregroundStyle(titleColor)
                 }
                 if let subtitle {
-                    Text(subtitle).font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
+                    Text(subtitle).font(StrandFont.subhead).foregroundStyle(subtitleColor)
                 }
             }
             Spacer(minLength: 0)
@@ -137,9 +222,10 @@ extension ScreenScaffold where Trailing == EmptyView {
     /// call site (which never passed `trailing`) source-compatible.
     init(title: LocalizedStringKey?, subtitle: LocalizedStringKey? = nil,
          onRefresh: (() async -> Void)? = nil, lazy: Bool = false, topBackground: AnyView? = nil,
+         hero: AnyView? = nil,
          @ViewBuilder content: @escaping () -> Content) {
         self.init(title: title, subtitle: subtitle, onRefresh: onRefresh, lazy: lazy,
-                  topBackground: topBackground, trailing: { EmptyView() }, content: content)
+                  topBackground: topBackground, hero: hero, trailing: { EmptyView() }, content: content)
     }
 }
 

@@ -19,36 +19,36 @@ struct BackupSyncView: View {
     @State private var alertMessage = ""
     @State private var showAlert = false
 
-    // Restore-from-folder flow (must-fix #1 + #2): a sheet lists the folder's snapshots; choosing one
-    // arms a destructive confirmation; only confirming runs the overwrite.
-    @State private var showRestoreSheet = false
+    // Restore-from-folder flow (must-fix #1 + #2): the folder's snapshots are listed inline (the mockup's
+    // "Snapshots" group); choosing one arms a destructive confirmation; only confirming runs the overwrite.
     @State private var snapshots: [FolderBackup.Snapshot] = []
     @State private var pendingRestore: FolderBackup.Snapshot?
     @State private var confirmRestore = false
 
     var body: some View {
         ScreenScaffold(
-            title: "Backup & Sync",
-            subtitle: "Save a full backup to a folder you choose - point it at Google Drive, iCloud or Dropbox for off-device sync."
+            title: "Backup",
+            // The header's serif line states the real last-snapshot fact. NOT the mockup's "412 MB":
+            // `FolderBackup.Snapshot` carries a name + a timestamp and nothing else, so a size would mean
+            // new folder-stat I/O — see the note on `snapshotsCard`.
+            subtitle: LocalizedStringKey(headerStatement),
+            // Flat ink, not the sky — Backup is an archive/utility page, not a lived moment.
+            topBackground: liquidFlatInkBackground()
         ) {
-            VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-                folderCard
-                autoCard
-                restoreCard
-            }
+            folderCard
+            // The mockup promotes the unencrypted-backup warning from a footnote inside the folder card to
+            // its own clay Alert. Deliberate: this is the one thing on the page a user must not miss before
+            // pointing the folder at a cloud service (#644).
+            unencryptedAlert
+            snapshotsCard
+            backupNowAction
         }
+        // The inline "Snapshots" list reads the folder on appear (and after a folder change / a backup).
+        .task { await refreshSnapshots() }
         // Result of a backup or a restore.
         .alert(alertTitle, isPresented: $showAlert) {
             Button("OK", role: .cancel) {}
         } message: { Text(alertMessage) }
-        // Pick which snapshot to restore - the folder's own snapshots, newest first (must-fix #1).
-        .sheet(isPresented: $showRestoreSheet) {
-            RestorePickerSheet(snapshots: snapshots) { chosen in
-                showRestoreSheet = false
-                pendingRestore = chosen
-                if chosen != nil { confirmRestore = true }
-            }
-        }
         // Explicit in-app destructive confirmation BEFORE any overwrite (must-fix #2).
         .alert("Restore this backup?", isPresented: $confirmRestore, presenting: pendingRestore) { snap in
             Button("Replace all data", role: .destructive) { runRestore(snap) }
@@ -61,112 +61,171 @@ struct BackupSyncView: View {
         }
     }
 
+    // MARK: - Header statement
+
+    /// The real last-snapshot fact for the header band. Deliberately carries no size: `FolderBackup`
+    /// records a snapshot's name and time only, so "412 MB" would need new folder-stat I/O in
+    /// `BackupSync.swift` — outside this restyle, and not something to guess at.
+    private var headerStatement: String {
+        guard let folderLabel else {
+            return String(localized: "No folder chosen yet. Pick one your cloud app already syncs, or any local folder.")
+        }
+        guard lastMs > 0 else {
+            return String(localized: "No backup yet. Your folder is \(folderLabel), ready when you are.")
+        }
+        return String(localized: "Last snapshot \(relativeTime(lastMs)), kept in \(folderLabel).")
+    }
+
     // MARK: - Cards
 
+    /// The mockup's "Backup folder" group: where snapshots go, the daily auto-backup switch, and the
+    /// retention count. Every control is the SAME binding the old stacked card carried — `chooseFolder()`
+    /// still opens the real picker, the toggle still writes `FolderBackup.autoEnabled`, the picker still
+    /// writes `FolderBackup.keepCount`.
     private var folderCard: some View {
-        StrandCard(padding: 20) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Backup folder")
-                    .font(StrandFont.headline).foregroundStyle(StrandPalette.textPrimary)
-                Text(folderLabel.map { String(localized: "Saving to: \($0)") }
-                     ?? String(localized: "No folder chosen yet. Pick one your cloud app already syncs, or any local folder."))
-                    .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("Tip: choose a folder in iCloud Drive and your backups sync to all your Apple devices automatically, no account setup needed.")
-                    .font(StrandFont.caption).foregroundStyle(StrandPalette.accent)
-                    .fixedSize(horizontal: false, vertical: true)
-                // #644: these .noopbak snapshots are a plain, unencrypted ZIP — pointing this folder at
-                // a cloud sync app (per the tip above) also uploads that readable file there. Say so
-                // plainly next to the folder picker, before anyone turns auto-backup on.
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(StrandPalette.statusWarning)
-                        .font(.system(size: 12))
-                        .accessibilityHidden(true)
-                    Text("These backups are unencrypted too. If this folder syncs to Drive, Dropbox or iCloud, the readable file goes there as well — only point it at a service you trust.")
-                        .font(StrandFont.caption).foregroundStyle(StrandPalette.statusWarning)
-                        .fixedSize(horizontal: false, vertical: true)
+        GroupCard("Backup folder") {
+            Button { chooseFolder() } label: {
+                // Row subtitles are ONE line by design (`GroupRow`), so they stay short enough to read
+                // whole — the iCloud guidance that used to sit here is now the header's own sentence.
+                GroupRow(title: LocalizedStringKey(folderLabel ?? String(localized: "No folder chosen")),
+                         subtitle: "Where snapshots are written.",
+                         value: folderLabel == nil ? String(localized: "Choose") : String(localized: "Change"),
+                         valueColor: StrandPalette.accent)
+            }
+            .buttonStyle(.plain)
+            .disabled(busy)
+            .accessibilityLabel(folderLabel == nil ? "Choose backup folder" : "Change backup folder")
+
+            #if os(iOS)
+            // #52: some iOS 26 users can't select a folder in the system picker (its "Open" button
+            // never fires). This backs up inside NOOP's own Files-visible folder instead — no picker.
+            if !FolderBackup.useInternalFolder {
+                Button { useNoopFolder() } label: {
+                    GroupRow(title: "Use NOOP's own folder",
+                             subtitle: "Browse them in Files.",
+                             value: String(localized: "Use"),
+                             valueColor: StrandPalette.accent)
                 }
-                NoopButton(folderLabel == nil ? "Choose folder" : "Change folder",
-                           systemImage: "folder", kind: .secondary) { chooseFolder() }
+                .buttonStyle(.plain)
+                .disabled(busy)
+            }
+            #endif
+
+            GroupRow(title: "Daily auto-backup",
+                     subtitle: "Runs when you next open NOOP.") {
+                Toggle("Daily auto-backup", isOn: $auto)
+                    .labelsHidden().toggleStyle(.switch).tint(StrandPalette.accent)
+                    .disabled(folderLabel == nil)
+                    .onChangeCompat(of: auto) { on in FolderBackup.autoEnabled = on }
+            }
+
+            // Retention: how many dated snapshots to keep. Wired to FolderBackup.keepCount; the next
+            // backup prunes the oldest beyond this count (BackupSync.snapshotsToPrune, unchanged).
+            GroupRow(title: "Keep last snapshots",
+                     subtitle: "Older ones are pruned, oldest first.") {
+                Picker("Keep last snapshots", selection: $keep) {
+                    ForEach(FolderBackup.keepOptions, id: \.self) { n in Text("\(n)").tag(n) }
+                }
+                .labelsHidden().pickerStyle(.menu).tint(StrandPalette.accent)
+                .onChangeCompat(of: keep) { n in FolderBackup.keepCount = n }
+            }
+        }
+    }
+
+    /// #644, promoted to the clay Alert card: these `.noopbak` snapshots are a plain, unencrypted ZIP —
+    /// pointing this folder at a cloud sync app also uploads that readable file there. Same words as the
+    /// footnote it replaces; the card is what makes it unmissable.
+    private var unencryptedAlert: some View {
+        AlertCard {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(StrandPalette.statusCritical)
+                    .accessibilityHidden(true)
+                Text("These backups are unencrypted. If this folder syncs to Drive, Dropbox or iCloud, the readable file goes there as well — only point it at a service you trust.")
+                    .font(StrandFont.body)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The mockup's "Snapshots" group — the folder's own backups, newest first, listed inline instead of
+    /// behind a picker sheet. Tapping one still arms the SAME destructive confirmation before any
+    /// overwrite (must-fix #2); nothing restores without it. No size column: `FolderBackup.Snapshot` has
+    /// no size (see `headerStatement`), and a made-up "MB" is exactly the kind of number this app doesn't
+    /// print. A hand-named file whose date lookup failed shows its name, never "1 Jan 1970" (#852).
+    private var snapshotsCard: some View {
+        GroupCard("Snapshots") {
+            if folderLabel == nil {
+                GroupRow(title: "Nothing yet",
+                         subtitle: "Choose a folder above, then back up.",
+                         valueColor: StrandPalette.textTertiary)
+            } else if snapshots.isEmpty {
+                GroupRow(title: "No backups in this folder yet",
+                         subtitle: "Back up now to make the first one.",
+                         valueColor: StrandPalette.textTertiary)
+            } else {
+                ForEach(snapshots) { snap in
+                    Button {
+                        pendingRestore = snap
+                        confirmRestore = true
+                    } label: {
+                        GroupRow(title: LocalizedStringKey(primaryLabel(snap)),
+                                 subtitle: snap.timeMs > 0 ? LocalizedStringKey(snap.name) : nil,
+                                 showsChevron: true)
+                    }
+                    .buttonStyle(.plain)
                     .disabled(busy)
-                #if os(iOS)
-                // #52: some iOS 26 users can't select a folder in the system picker (its "Open" button
-                // never fires). This backs up inside NOOP's own Files-visible folder instead — no picker.
-                if !FolderBackup.useInternalFolder {
-                    NoopButton("Use NOOP's own folder (browse in Files)",
-                               systemImage: "iphone", kind: .tertiary) { useNoopFolder() }
-                        .disabled(busy)
+                    .accessibilityLabel(restoreAccessibilityLabel(snap))
                 }
-                #endif
             }
         }
     }
 
-    private var autoCard: some View {
-        StrandCard(padding: 20, tint: auto && folderLabel != nil ? StrandPalette.accent : nil) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .center, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Daily auto-backup")
-                            .font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
-                        Text("Backs up to your folder about once a day and keeps the latest \(keep). On this platform it runs when you next open NOOP.")
-                            .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 0)
-                    Toggle("Daily auto-backup", isOn: $auto)
-                        .labelsHidden().toggleStyle(.switch).tint(StrandPalette.accent)
-                        .disabled(folderLabel == nil)
-                        .onChangeCompat(of: auto) { on in FolderBackup.autoEnabled = on }
-                }
-                // Retention: how many dated snapshots to keep. Wired to FolderBackup.keepCount; the next
-                // backup prunes the oldest beyond this count (BackupSync.snapshotsToPrune, unchanged).
-                HStack(alignment: .center, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Keep last snapshots")
-                            .font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
-                        Text("Older backups beyond this many are pruned, oldest first (≈ that many days). If data ever corrupts, restore the newest.")
-                            .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 0)
-                    Picker("Keep last snapshots", selection: $keep) {
-                        ForEach(FolderBackup.keepOptions, id: \.self) { n in Text("\(n)").tag(n) }
-                    }
-                    .labelsHidden().pickerStyle(.menu).tint(StrandPalette.accent)
-                    .onChangeCompat(of: keep) { n in FolderBackup.keepCount = n }
-                }
-                Text(lastMs > 0 ? "Last backup: \(relativeTime(lastMs))" : "No backup yet.")
-                    .font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
-                NoopButton(busy ? "Working…" : "Back up now",
-                           systemImage: "icloud.and.arrow.up", kind: .primary, fullWidth: true) { backupNow() }
-                    .disabled(folderLabel == nil || busy)
-            }
+    /// The mockup's ink "Back up now" row — the same `FolderBackup.backupNow(checkpoint:)` the old primary
+    /// button ran, with the same folder/busy gate.
+    private var backupNowAction: some View {
+        ActionCard(icon: "icloud.and.arrow.up",
+                   title: busy ? "Working…" : "Back up now",
+                   subtitle: LocalizedStringKey(lastMs > 0
+                        ? String(localized: "Last backup \(relativeTime(lastMs)).")
+                        : String(localized: "Writes a full snapshot to your folder."))) {
+            backupNow()
         }
+        .disabled(folderLabel == nil || busy)
+        // `.disabled` alone leaves a custom-filled card looking tappable, so dim it too — a dark ink
+        // row that can't run should read as unavailable, not just fail silently on tap.
+        .opacity(folderLabel == nil || busy ? 0.5 : 1)
+        .accessibilityLabel("Back up now")
     }
 
-    private var restoreCard: some View {
-        StrandCard(padding: 20) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Restore")
-                    .font(StrandFont.headline).foregroundStyle(StrandPalette.textPrimary)
-                Text("Replace this device's data with one of the backups in your folder. This overwrites current data, so back up first if you're unsure.")
-                    .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                NoopButton("Restore from a backup…", systemImage: "arrow.uturn.backward", kind: .secondary) {
-                    openRestorePicker()
-                }
-                .disabled(folderLabel == nil || busy)
-            }
-        }
+    /// A snapshot row's headline: a friendly date when one resolved, else the filename (never the epoch).
+    private func primaryLabel(_ snap: FolderBackup.Snapshot) -> String {
+        snap.timeMs > 0 ? absoluteTime(snap.timeMs) : snap.name
+    }
+
+    private func restoreAccessibilityLabel(_ snap: FolderBackup.Snapshot) -> String {
+        snap.timeMs > 0 ? String(localized: "Restore backup from \(absoluteTime(snap.timeMs))")
+                        : String(localized: "Restore backup \(snap.name)")
+    }
+
+    /// Re-read the folder's snapshots for the inline list. Off the main actor (a folder listing is file
+    /// I/O), mirroring how `runRestore` detaches its own work.
+    private func refreshSnapshots() async {
+        let list = await Task.detached(priority: .utility) { FolderBackup.listSnapshots() }.value
+        snapshots = list
     }
 
     // MARK: - Actions
 
     private func chooseFolder() {
         #if os(macOS)
-        if FolderBackup.pickFolder() != nil { folderLabel = FolderBackup.folderLabel() }
+        if FolderBackup.pickFolder() != nil {
+            folderLabel = FolderBackup.folderLabel()
+            Task { await refreshSnapshots() }
+        }
         #else
         // #1000a: on iOS the folder picker has reportedly refused to enable its Select button, leaving
         // the user with only Cancel and NOOP silently doing nothing. We can't tell a deliberate Cancel
@@ -180,6 +239,7 @@ struct BackupSyncView: View {
             busy = false
             if picked != nil {
                 folderLabel = FolderBackup.folderLabel()
+                await refreshSnapshots()
             } else if !FolderBackup.useInternalFolder {
                 // Only nag when there's no working destination. If the internal fallback is already
                 // active, a cancelled picker changed nothing — and the button the message points at is
@@ -198,6 +258,7 @@ struct BackupSyncView: View {
     private func useNoopFolder() {
         FolderBackup.useNoopFolder()
         folderLabel = FolderBackup.folderLabel()
+        Task { await refreshSnapshots() }
         alertTitle = String(localized: "Using NOOP's folder")
         alertMessage = String(localized: "Backups will be saved inside NOOP. Open the Files app → On My iPhone → NOOP → Backups to see them, or drag that folder into iCloud Drive to read it on your Mac. To use a different folder later, tap Change folder.")
         showAlert = true
@@ -217,17 +278,8 @@ struct BackupSyncView: View {
                     : String(localized: "Backup failed - re-pick the folder and try again.")
                 showAlert = true
             }
-        }
-    }
-
-    private func openRestorePicker() {
-        snapshots = FolderBackup.listSnapshots()
-        if snapshots.isEmpty {
-            alertTitle = String(localized: "No backups found")
-            alertMessage = String(localized: "There are no NOOP backups in your folder yet. Use Back up now first.")
-            showAlert = true
-        } else {
-            showRestoreSheet = true
+            // The new snapshot (and any pruned by retention) change the inline list.
+            await refreshSnapshots()
         }
     }
 
@@ -261,76 +313,6 @@ struct BackupSyncView: View {
     private func relativeTime(_ ms: Int) -> String {
         let f = RelativeDateTimeFormatter()
         return f.localizedString(for: Date(timeIntervalSince1970: Double(ms) / 1000.0), relativeTo: Date())
-    }
-
-    private func absoluteTime(_ ms: Int) -> String {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
-        return f.string(from: Date(timeIntervalSince1970: Double(ms) / 1000.0))
-    }
-}
-
-/// The snapshot chooser shown before a restore (must-fix #1: pick from the folder, newest first).
-/// Reports the chosen snapshot (or nil if dismissed) back to the host, which then arms the destructive
-/// confirmation. No reorder/swipe interaction here (this is a plain tap-to-choose list), so the old raw
-/// `List` is replaced outright by a `GroupCard` of `GroupRow`s in a `ScrollView` — the same divided
-/// list-row look as the rest of the app instead of system List chrome.
-private struct RestorePickerSheet: View {
-    let snapshots: [FolderBackup.Snapshot]
-    let onChoose: (FolderBackup.Snapshot?) -> Void
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                GroupCard {
-                    ForEach(snapshots) { snap in
-                        Button { onChoose(snap) } label: {
-                            // A hand-named file whose date lookup failed has timeMs 0; show its name as
-                            // the primary line rather than "1 Jan 1970". The filename subtitle then only
-                            // repeats when we DO have a real date to head the row.
-                            GroupRow(
-                                title: LocalizedStringKey(primaryLabel(snap)),
-                                subtitle: snap.timeMs > 0 ? LocalizedStringKey(snap.name) : nil,
-                                showsChevron: true
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(accessibilityLabel(snap))
-                    }
-                }
-                .padding(20)
-            }
-            .background(StrandPalette.surfaceBase)
-            .navigationTitle("Choose a backup")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { onChoose(nil) }
-                }
-            }
-        }
-        // A macOS `.sheet` sizes to its content's ideal height, and a `List` inside a `NavigationStack`
-        // reports a near-zero intrinsic height there — so without an explicit frame the sheet collapses
-        // to just the title + Cancel and clips every row, leaving the user an empty "Choose a backup"
-        // with backups that ARE in the folder (the caller only opens this sheet when the list is
-        // non-empty). Give it a real size, the same way `AddDeviceWizard`/`HealthView` frame their macOS
-        // sheets with a fixed size. iOS/iPadOS sheets already take a sensible height, so the frame is
-        // macOS-only. A longer backup list scrolls within the ScrollView; a short one leaves trailing
-        // space. (#1093)
-        #if os(macOS)
-        .frame(width: 460, height: 420)
-        #endif
-    }
-
-    /// The row's headline: a friendly date when we resolved one, else the filename (never the epoch date).
-    private func primaryLabel(_ snap: FolderBackup.Snapshot) -> String {
-        snap.timeMs > 0 ? absoluteTime(snap.timeMs) : snap.name
-    }
-
-    /// VoiceOver label: reads the resolved date when we have one, else the filename (no epoch date).
-    private func accessibilityLabel(_ snap: FolderBackup.Snapshot) -> String {
-        snap.timeMs > 0 ? String(localized: "Restore backup from \(absoluteTime(snap.timeMs))")
-                        : String(localized: "Restore backup \(snap.name)")
     }
 
     private func absoluteTime(_ ms: Int) -> String {
