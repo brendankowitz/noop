@@ -106,6 +106,13 @@ public enum StrandPalette {
     public static var accent         = Color(light: "#234F9E", dark: "#60A0E0") // WHOOP link/action blue (gold killed 2026-06-22)
     public static var accentHover    = Color(light: "#1C3F80", dark: "#8FBEEC")
     public static var accentMuted    = Color(light: "#E4ECF6", dark: "#16233A") // selected-row tint (pale blue / dark blue)
+    /// Storage for upstream's `AccentColor`-driven chrome-accent picker (`Appearance.swift`,
+    /// `.noopAccent(_:customHex:)`). This fork's `accent`/`accentHover`/`accentMuted` above are plain
+    /// Hearth-set `var`s, not derived from `accentChoice` — so the picker's Settings UI still compiles
+    /// and persists a choice, but a fork build stays on the curated Hearth accent regardless of what's
+    /// stored here. Kept only so upstream code that reads/writes these two doesn't need forking.
+    public static var accentChoice: AccentColor = .mint
+    public static var customAccentHex: String = AccentColor.defaultCustomHex
     /// A muted flagged/critical wash — same "tinted, no-shadow" semantic role as `accentMuted`
     /// but for something that needs attention rather than a conclusion (the Hearth mockup's clay
     /// `#F3E2DE` Alert card). Upstream default is a pale red family so a fork that never sets this

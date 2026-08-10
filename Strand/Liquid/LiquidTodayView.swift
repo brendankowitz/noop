@@ -1698,6 +1698,10 @@ private struct HeroScoreCell: View {
     // scale passes 1 to match the app-wide one-decimal `effortDisplay` convention (#45).
     var decimals: Int = 0
 
+    @State private var shown: Double = 0
+
+    private var frac: Double? { score.map { max(0, min(1, $0 / maxValue)) } }
+
     var body: some View {
         Button(action: onTap) {
             VStack(spacing: 7) {
