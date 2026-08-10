@@ -31,7 +31,9 @@ struct FusedRecordHost: View {
                 FusedRecordView(record: record)
             } else {
                 ScreenScaffold(title: "Your Data, Fused",
-                               subtitle: "Building your best-sourced record…") {
+                               subtitle: "Building your best-sourced record…",
+                               // Matches FusedRecordView's real content — flat ink.
+                               topBackground: liquidFlatInkBackground()) {
                     ComingSoon(what: "Reading your sources…", symbol: "square.stack.3d.up")
                 }
             }

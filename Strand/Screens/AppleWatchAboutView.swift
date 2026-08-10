@@ -101,7 +101,9 @@ struct AppleWatchAboutView: View {
     var body: some View {
         ScreenScaffold(title: "About Apple Watch data",
                        subtitle: "What your watch is great at, where it's lighter than a chest strap, and how sure NOOP is.",
-                       lazy: true) {
+                       lazy: true,
+                       // A settings-adjacent reference page, matching Settings — sky.
+                       topBackground: liquidScaffoldSky()) {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                 introCard
                 capabilityCard

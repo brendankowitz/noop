@@ -339,43 +339,44 @@ struct RootTabView: View {
     // The "More" tab is the app's catch-all index. It was a plain SwiftUI `List` with system large-title
     // + system title-case section headers, so it didn't match any other page (which all use ScreenScaffold
     // + SectionHeader's UPPERCASE overline + the 28pt section rhythm). Rebuilt on the shared page chrome:
-    // ScreenScaffold for the title1 "More" + subtitle, a `SectionHeader` overline per group, and the group's
-    // rows in a single grouped NoopCard with hairline dividers — the same row idiom Settings/Health use.
+    // ScreenScaffold for the title1 "More" + subtitle, a tappable overline per group, and the group's rows
+    // in a `GroupCard` — the Hearth mockup's divided list-row "Group" card, its own stated workhorse.
     private func moreTab(path: Binding<NavigationPath>, scrollSignal: Int) -> some View {
         NavigationStack(path: path) {
             ScreenScaffold(title: "More", subtitle: "Everything else, one tap away",
                            onRefresh: { await repo.refresh() },
-                           topBackground: liquidScaffoldSky()) {
+                           // Flat ink, not the sky — same archive-not-moment rationale as Trends/Health.
+                           topBackground: liquidFlatInkBackground()) {
                 moreSection("Insights") {
-                    MoreRow("What Moves You", "wand.and.sparkles", .insightsHub)
-                    MoreRow("Intelligence", "brain.head.profile", .intelligence)
-                    MoreRow("Coach", "sparkles", .coach)
-                    MoreRow("Insights", "lightbulb.fill", .insights)
-                    MoreRow("Explore", "square.grid.2x2.fill", .explore)
-                    MoreRow("Compare", "rectangle.split.2x1.fill", .compare)
+                    moreLink("What Moves You", "wand.and.sparkles", .insightsHub)
+                    moreLink("Intelligence", "brain.head.profile", .intelligence)
+                    moreLink("Coach", "sparkles", .coach)
+                    moreLink("Insights", "lightbulb.fill", .insights)
+                    moreLink("Explore", "square.grid.2x2.fill", .explore)
+                    moreLink("Compare", "rectangle.split.2x1.fill", .compare)
                 }
                 moreSection("Body") {
-                    MoreRow("Live", "waveform.path.ecg", .live)
-                    MoreRow("Workouts", "figure.run", .workouts)
-                    MoreRow("Health", "heart.text.square.fill", .health)
-                    MoreRow("Lab Book", "books.vertical.fill", .labBook)
-                    MoreRow("Stress", "bolt.heart.fill", .stress)
-                    MoreRow("Breathe", "wind", .breathe)
-                    MoreRow("Intervals", "timer", .intervals)
+                    moreLink("Live", "waveform.path.ecg", .live)
+                    moreLink("Workouts", "figure.run", .workouts)
+                    moreLink("Health", "heart.text.square.fill", .health)
+                    moreLink("Lab Book", "books.vertical.fill", .labBook)
+                    moreLink("Stress", "bolt.heart.fill", .stress)
+                    moreLink("Breathe", "wind", .breathe)
+                    moreLink("Intervals", "timer", .intervals)
                     // Experimental beat-to-beat regularity visualization — self-gates on its own consent.
-                    MoreRow("Rhythm", "waveform.path", .rhythm)
+                    moreLink("Rhythm", "waveform.path", .rhythm)
                 }
                 moreSection("Data") {
-                    MoreRow("Your Data, Fused", "square.stack.3d.up.fill", .fusedRecord)
-                    MoreRow("Apple Health", "heart.fill", .appleHealth)
-                    MoreRow("Mi Band", "figure.walk.motion", .miBand)
-                    MoreRow("Data Sources", "externaldrive.fill", .dataSources)
-                    MoreRow("Backup & Sync", "externaldrive.fill.badge.icloud", .backupSync)
+                    moreLink("Your Data, Fused", "square.stack.3d.up.fill", .fusedRecord)
+                    moreLink("Apple Health", "heart.fill", .appleHealth)
+                    moreLink("Mi Band", "figure.walk.motion", .miBand)
+                    moreLink("Data Sources", "externaldrive.fill", .dataSources)
+                    moreLink("Backup & Sync", "externaldrive.fill.badge.icloud", .backupSync)
                     // #155: HealthKit-free Apple Health path for sideloaded installs (Siri Shortcut
                     // reads the opt-in Documents/noop_sync.txt drop file).
-                    MoreRow("Shortcuts Export", "square.and.arrow.up.fill", .shortcutsExport)
+                    moreLink("Shortcuts Export", "square.and.arrow.up.fill", .shortcutsExport)
                     // The plain 4.0 vs 5.0/MG capability grid — what NOOP reads live off each strap.
-                    MoreRow("NOOP Limitations", "list.bullet.rectangle", .noopLimitations)
+                    moreLink("NOOP Limitations", "list.bullet.rectangle", .noopLimitations)
                 }
                 moreSection("App") {
                     // #805/#811: the v7.3.1 #766 alarm consolidation moved Smart Alarm under a single
@@ -388,13 +389,13 @@ struct RootTabView: View {
                     // and project.yml excludes Screens/NotificationSettingsView.swift from the iOS target),
                     // so it can't compile or apply on iPhone. iPhone's wrist-alert controls live on the
                     // Automations screen instead. Its absence from the iPhone More list is correct.
-                    MoreRow("Alarms", "alarm.fill", .alarms)
-                    MoreRow("Automations", "wand.and.stars", .automations)
+                    moreLink("Alarms", "alarm.fill", .alarms)
+                    moreLink("Automations", "wand.and.stars", .automations)
                     // The Test Centre (the diagnostics + bug-report hub) gets a first-class home here, not
                     // just buried in Settings, so the feedback loop is one tap from the More tab.
-                    MoreRow("Test Centre", "stethoscope", .testCentre)
-                    MoreRow("Siri & Shortcuts", "mic.fill", .siriShortcuts)
-                    MoreRow("Settings", "gearshape.fill", .settings)
+                    moreLink("Test Centre", "stethoscope", .testCentre)
+                    moreLink("Siri & Shortcuts", "mic.fill", .siriShortcuts)
+                    moreLink("Settings", "gearshape.fill", .settings)
                 }
             }
             // The rows push MoreDestination VALUES so a re-tap of the More tab can pop them off the
@@ -419,9 +420,8 @@ struct RootTabView: View {
     /// One titled, COLLAPSIBLE group in the More index (S2): the app's overline (UPPERCASE) becomes a
     /// tappable header with a disclosure chevron; tapping it expands/collapses the grouped rows card.
     /// Insights + Body default open, Data + App default collapsed (the `expandedMoreSections` seed) so the
-    /// list is shorter at rest without dropping a single row. The grouped card is unchanged: a single
-    /// `NoopCard` holding a `VStack(spacing: 0)` whose `MoreRow`s draw their own hairlines, clipped to the
-    /// card's rounded shape so the last divider is trimmed inside the corners. Same idiom Settings/Health use.
+    /// list is shorter at rest without dropping a single row. The rows render in a `GroupCard`
+    /// (`Packages/StrandDesign/CardKinds.swift`) — the Hearth mockup's divided list-row card.
     @ViewBuilder
     private func moreSection<Rows: View>(_ title: String,
                                          @ViewBuilder rows: @escaping () -> Rows) -> some View {
@@ -456,19 +456,22 @@ struct RootTabView: View {
             .accessibilityHint(Text(isOpen ? String(localized: "Double tap to collapse") : String(localized: "Double tap to expand")))
 
             if isOpen {
-                // Zero internal padding so each MoreRow owns its own comfortable insets + height; the rows
-                // supply their own hairline separators (drawn at the bottom of every row but the last via the
-                // divider overlay) so the group reads as one continuous grouped list, matching Settings/Health.
-                NoopCard(padding: 0) {
-                    VStack(spacing: 0) { rows() }
-                        // Clip the rows column to the card's rounded shape so the last row's bottom hairline is
-                        // trimmed inside the corners (the card draws its surface in the BACKGROUND and doesn't
-                        // clip content itself, so without this the final divider would run past the rounded edge).
-                        .clipShape(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
-                }
+                // The mockup's "Group" card — the divided list-row workhorse — replaces the old ad-hoc
+                // NoopCard(padding: 0) + manual VStack/clip: GroupCard owns the row insets, hairline
+                // dividers and rowCardRadius (24) clipping itself.
+                GroupCard { rows() }
             }
         }
     }
+}
+
+/// One row in the More index: a `GroupRow` wrapped in a `NavigationLink` pushing the destination VALUE
+/// (not a closure) so a re-tap of the More tab can pop it off the bound path (#135/#198).
+private func moreLink(_ title: LocalizedStringKey, _ icon: String, _ route: MoreDestination) -> some View {
+    NavigationLink(value: route) {
+        GroupRow(leading: .icon(icon, StrandPalette.accent), title: title, showsChevron: true)
+    }
+    .buttonStyle(.plain)
 }
 
 /// Every screen the More index links to, as a `Hashable` value the tab's `NavigationPath` can carry
@@ -513,54 +516,6 @@ private enum MoreDestination: Hashable {
     }
 }
 
-
-/// One tappable destination row in the More index. A `NavigationLink` whose label is the standard app row:
-/// the SF Symbol icon tinted `StrandPalette.accent`, the title in the body text colour, a `Spacer`, and a
-/// trailing `chevron.right` in `textTertiary`. ~44pt min height + the card's row insets keep the whole row a
-/// comfortable tap target.
-private struct MoreRow: View {
-    let title: LocalizedStringKey
-    let icon: String
-    let route: MoreDestination
-
-    init(_ title: LocalizedStringKey, _ icon: String, _ route: MoreDestination) {
-        self.title = title; self.icon = icon; self.route = route
-    }
-
-    var body: some View {
-        NavigationLink(value: route) {
-            HStack(spacing: 14) {
-                // Pin the icon to the accent explicitly. A plain inherited tint gets re-resolved by iOS to
-                // its default blue a beat after first render — so the icons flashed green→blue (#184). The
-                // explicit foregroundStyle on the image overrides that; the title keeps the primary colour.
-                Image(systemName: icon)
-                    .font(.system(size: 17, weight: .regular))
-                    .foregroundStyle(StrandPalette.accent)
-                    .frame(width: 26, alignment: .center)
-                Text(title)
-                    .font(StrandFont.body)
-                    .foregroundStyle(StrandPalette.textPrimary)
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(StrandPalette.textTertiary)
-            }
-            .padding(.horizontal, 16)
-            .frame(minHeight: 44)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            // Hairline under every row; the grouped container clips the last one's overflow so the bottom
-            // edge stays clean (the divider sits inside the card's rounded corners).
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(StrandPalette.hairline)
-                    .frame(height: 1)
-                    .padding(.leading, 16)
-            }
-        }
-        .buttonStyle(.plain)
-    }
-}
 
 // MARK: - Quick actions (centre FAB)
 
@@ -643,4 +598,109 @@ private struct QuickActionSheet: View {
     }
 }
 
+// MARK: - Floating tab bar
+
+/// The signature bottom bar: two frosted "glass" islands (Today·Trends / Sleep·More) with the gold
+/// action button nested cleanly in the gap between them — no overlap, no glow. Real iOS 26 Liquid
+/// Glass where available, a `.ultraThinMaterial` fallback below. Replaces the hidden native tab bar.
+private struct FloatingTabBar: View {
+    @Binding var selection: Int
+    /// Fires when the user taps the ALREADY-active tab (2026-07-02: re-tap should refresh).
+    var onReselect: (Int) -> Void = { _ in }
+
+    private struct Item: Identifiable { let title: LocalizedStringKey; let icon: String; let tag: Int; var id: Int { tag } }
+    private let nav = [Item(title: "Today", icon: "square.grid.2x2", tag: 0),
+                       Item(title: "Trends", icon: "chart.line.uptrend.xyaxis", tag: 1),
+                       Item(title: "Sleep", icon: "bed.double", tag: 2),
+                       Item(title: "More", icon: "ellipsis", tag: 3)]
+
+    var body: some View {
+        // One frosted glass bar, four evenly-spaced tabs. The quick-action "+" now lives in the
+        // top-right of each screen's header (balancing the profile avatar on the left).
+        HStack(spacing: 2) {
+            tabButton(nav[0])
+            tabButton(nav[1])
+            tabButton(nav[2])
+            tabButton(nav[3])
+        }
+        .padding(.vertical, 7)
+        .padding(.horizontal, 8)
+        .liquidGlass(in: Capsule())
+        // The bar is a DARK frosted pill in both themes, so its text/icons use the onDark tokens
+        // unconditionally (see tabButton below) — but a real material/glassEffect blur samples
+        // whatever actually scrolls behind it. Today's dark ink card keeps that sample dark, but the
+        // More index is mostly light `surfaceRaised` rows all the way to the bottom, so the same blur
+        // washed the whole pill white and took the onDark (near-white) text with it (bug: "after I
+        // click on More, it changes to white"). A near-opaque ink scrim behind the blur pins the
+        // sampled base back to dark regardless of what's underneath, so the pill reads the same over
+        // every tab; the blur on top still supplies the glass diffusion/specular look.
+        .background(Color(.sRGB, red: 0x1B / 255, green: 0x1A / 255, blue: 0x14 / 255, opacity: 0.82),
+                    in: Capsule())
+        // Soft top-lit rim instead of one hard hairline, so there's no crisp cut-out edge.
+        .overlay(
+            Capsule().strokeBorder(
+                LinearGradient(colors: [.white.opacity(0.22), .white.opacity(0.04)],
+                               startPoint: .top, endPoint: .bottom),
+                lineWidth: 0.75)
+        )
+        // Lighter, wider shadow: real elevation without stamping a dark halo on the flat canvas.
+        .shadow(color: .black.opacity(0.22), radius: 18, x: 0, y: 8)
+        .padding(.horizontal, 22)
+        .padding(.bottom, 4)
+    }
+
+    private func tabButton(_ item: Item) -> some View {
+        let active = selection == item.tag
+        return Button {
+            if active {
+                onReselect(item.tag)
+            } else {
+                withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.24)) { selection = item.tag }
+            }
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: item.icon)
+                    .font(.system(size: 18, weight: active ? .semibold : .regular))
+                Text(item.title)
+                    .font(.system(size: 10, weight: active ? .semibold : .medium))
+            }
+            // The bar itself is a dark frosted glass pill (`.liquidGlass`) in BOTH themes, same as the
+            // Today hero card — so this needs the scheme-invariant onDark tokens, not textSecondary
+            // (dark ink meant for the light canvas, which read as low-contrast dark-on-dark here — the
+            // actual "contrast conflict" bug). Matches the mockup's filled-vs-outline glyph language:
+            // full warm-white when active, dimmed warm-white when not — not an accent tint, which read
+            // muddy against the glass.
+            .foregroundStyle(active ? StrandPalette.onDarkPrimary : StrandPalette.onDarkTertiary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 3)
+            .background(
+                // A second, color-independent signal on top of the text/icon tint: real iOS 26 Liquid
+                // Glass can render meaningfully lighter/more reflective on actual hardware than the
+                // simulator's .ultraThinMaterial fallback, which can wash out a color-only distinction.
+                // An explicit capsule behind the active tab reads unambiguously regardless.
+                Capsule(style: .continuous)
+                    .fill(Color.white.opacity(active ? 0.16 : 0))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(item.title)
+        .accessibilityAddTraits(active ? [.isButton, .isSelected] : .isButton)
+    }
+
+}
+
+// MARK: - Liquid Glass (iOS 26) with a Material fallback
+
+private extension View {
+    /// Real iOS 26 Liquid Glass where available; `.ultraThinMaterial` on iOS 17–25 — a clean
+    /// blended degrade so the bar stays modern on new OSes without breaking older ones.
+    @ViewBuilder func liquidGlass(in shape: some Shape) -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular, in: shape)
+        } else {
+            self.background(.ultraThinMaterial, in: shape)
+        }
+    }
+}
 #endif

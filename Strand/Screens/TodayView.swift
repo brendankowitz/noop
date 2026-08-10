@@ -4630,7 +4630,7 @@ private struct RecordingStatusLight: View {
         switch state {
         case .recording:           return StrandPalette.statusPositive
         case .lastSynced:          return StrandPalette.statusWarning
-        case .notRecording:        return Color(red: 0.98, green: 0.27, blue: 0.23)
+        case .notRecording:        return StrandPalette.statusCritical
         case .historyExperimental: return StrandPalette.accent
         case .connectedNoData:     return StrandPalette.accent
         }

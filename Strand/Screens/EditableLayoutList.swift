@@ -2,6 +2,13 @@ import SwiftUI
 import StrandDesign
 
 /// Shared Shown / Hidden list used by Today sections, Key Metrics, and Your Cards.
+///
+/// This is a **reorderable** list (drag-to-reorder within "Shown"), so the outer container stays a
+/// plain SwiftUI `List` — that's what gives `.onMove` its native drag handle in edit mode for free.
+/// Restyle only strips the system grouped-list chrome (headers, insets, separators, background) and
+/// draws each row's INTERIOR with the app's `GroupRow` anatomy (icon tile → title/subtitle → trailing
+/// accessory), so it reads as the same divided list-row card as everywhere else even though it's
+/// structurally still a `List` (Phase 4, #vivid-shimmying-pancake task 1).
 struct EditableLayoutList<Item, Options>: View
 where Item: Identifiable & Equatable, Options: View {
     @Binding var draft: EditableLayoutDraft<Item>
@@ -19,7 +26,13 @@ where Item: Identifiable & Equatable, Options: View {
 
     var body: some View {
         List {
+            // Not part of the reorderable ForEach below, so this can be a real GroupCard — the caller
+            // (e.g. the Key Metrics page's "Display" toggle/segmented control) supplies whatever it
+            // needs; EmptyView() renders nothing.
             options()
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
 
             Section {
                 ForEach(draft.visible) { item in
@@ -34,6 +47,9 @@ where Item: Identifiable & Equatable, Options: View {
                         onConfigure: { onConfigure(item) },
                         onVisibilityChange: { hide(item) }
                     )
+                    .listRowInsets(rowInsets)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                 }
                 .onMove(perform: moveVisible)
             } header: {
@@ -49,6 +65,9 @@ where Item: Identifiable & Equatable, Options: View {
                 if draft.hidden.isEmpty {
                     Text("Nothing hidden")
                         .foregroundStyle(StrandPalette.textTertiary)
+                        .listRowInsets(rowInsets)
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                 } else {
                     ForEach(draft.hidden) { item in
                         EditableLayoutRow(
@@ -62,6 +81,9 @@ where Item: Identifiable & Equatable, Options: View {
                             onConfigure: { onConfigure(item) },
                             onVisibilityChange: { show(item) }
                         )
+                        .listRowInsets(rowInsets)
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                     }
                 }
             } header: {
@@ -78,19 +100,21 @@ where Item: Identifiable & Equatable, Options: View {
                     .font(StrandFont.body)
                     .foregroundStyle(StrandPalette.statusCritical)
                     .accessibilityLabel("Reset This Layout")
+                    .listRowInsets(rowInsets)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
             }
         }
-        #if os(iOS)
-        .listStyle(.insetGrouped)
-        #else
-        .listStyle(.inset)
-        #endif
+        .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(StrandPalette.surfaceBase)
         #if os(iOS)
         .environment(\.editMode, .constant(.active))
         #endif
     }
+
+    /// Matches `GroupCard`'s own horizontal inset (22pt); `GroupRow` supplies its own vertical rhythm.
+    private var rowInsets: EdgeInsets { EdgeInsets(top: 0, leading: 22, bottom: 0, trailing: 22) }
 
     private func moveVisible(from offsets: IndexSet, to destination: Int) {
         draft.moveVisible(from: offsets, to: destination)
@@ -109,6 +133,10 @@ where Item: Identifiable & Equatable, Options: View {
     }
 }
 
+/// One row, drawn with the shared `GroupRow` anatomy (icon tile → title/subtitle → trailing
+/// accessory): an optional "Edit" link plus the show/hide toggle button. `GroupRow`'s accessory slot
+/// (added for this task) carries both, since a reorderable customization row needs more than a single
+/// trailing value/chevron.
 private struct EditableLayoutRow: View {
     let title: String
     let subtitle: String?
@@ -121,50 +149,32 @@ private struct EditableLayoutRow: View {
     let onVisibilityChange: () -> Void
 
     var body: some View {
-        HStack(spacing: NoopMetrics.space3) {
-            RoundedRectangle(cornerRadius: NoopMetrics.space2, style: .continuous)
-                .fill(StrandPalette.surfaceInset)
-                .frame(width: NoopMetrics.space8, height: NoopMetrics.space8)
-                .overlay {
-                    Image(systemName: icon)
-                        .font(StrandFont.subhead.weight(.semibold))
-                        .foregroundStyle(isVisible ? tint : StrandPalette.textTertiary)
+        GroupRow(
+            leading: .icon(icon, isVisible ? tint : StrandPalette.textTertiary),
+            title: LocalizedStringKey(title),
+            subtitle: subtitle.map { LocalizedStringKey($0) }
+        ) {
+            HStack(spacing: NoopMetrics.space2) {
+                if let configurationLabel {
+                    Button(configurationLabel, action: onConfigure)
+                        .buttonStyle(.plain)
+                        .font(StrandFont.caption.weight(.semibold))
+                        .foregroundStyle(StrandPalette.accent)
+                        .accessibilityLabel(String(localized: "Edit \(title)"))
                 }
-                .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: NoopMetrics.space1) {
-                Text(title)
-                    .font(StrandFont.body)
-                    .foregroundStyle(isVisible ? StrandPalette.textPrimary : StrandPalette.textTertiary)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(StrandFont.caption)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .lineLimit(1)
+                Button(action: onVisibilityChange) {
+                    Image(systemName: isVisible ? "minus.circle.fill" : "plus.circle.fill")
+                        .font(StrandFont.title2)
+                        .foregroundStyle(isVisible ? StrandPalette.textSecondary : StrandPalette.accent)
                 }
+                .buttonStyle(.plain)
+                .disabled(isVisible && !canHide)
+                .accessibilityLabel(visibilityLabel)
             }
-
-            Spacer(minLength: NoopMetrics.space2)
-
-            if let configurationLabel {
-                Button(configurationLabel, action: onConfigure)
-                    .buttonStyle(.plain)
-                    .font(StrandFont.caption.weight(.semibold))
-                    .foregroundStyle(StrandPalette.accent)
-                    .accessibilityLabel(String(localized: "Edit \(title)"))
-            }
-
-            Button(action: onVisibilityChange) {
-                Image(systemName: isVisible ? "minus.circle.fill" : "plus.circle.fill")
-                    .font(StrandFont.title2)
-                    .foregroundStyle(isVisible ? StrandPalette.textSecondary : StrandPalette.accent)
-            }
-            .buttonStyle(.plain)
-            .disabled(isVisible && !canHide)
-            .accessibilityLabel(visibilityLabel)
         }
         .contentShape(Rectangle())
-        .listRowBackground(NoopChromeSurface())
+        .listRowBackground(Color.clear)
     }
 
     private var visibilityLabel: String {
@@ -172,5 +182,4 @@ private struct EditableLayoutRow: View {
             ? String(localized: "Hide \(title)")
             : String(localized: "Show \(title)")
     }
-
 }

@@ -31,9 +31,9 @@ struct HealthView: View {
                        // demand instead of all up-front.
                        onRefresh: { await repo.refresh() },
                        lazy: true,
-                       // The day-of-sky liquid backdrop, matching Today / Sleep / Trends: a fixed,
-                       // full-bleed time-of-day sky behind the scroll content (does not scroll).
-                       topBackground: liquidScaffoldSky()) {
+                       // Flat ink, not the sky — Health reads as archive, not a lived moment (see the
+                       // identical rationale in TrendsView.swift).
+                       topBackground: liquidFlatInkBackground()) {
             if repo.days.isEmpty {
                 // First run / no history: whether to show the empty state or the full live stack depends
                 // on whether a strap is streaming live HR — a `live`-dependent choice. It's isolated to
@@ -1336,9 +1336,16 @@ private struct SkinTempSection: View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             SectionHeader("Skin temperature", overline: "From your nightly sensor")
 
-            // 1. Illness heads-up — only when the engine returned something worth surfacing.
+            // 1. Illness heads-up — only when the engine returned something worth surfacing. Tapping
+            // through opens the full 3-rung ladder (bknoop fork) — a closure-based push since this is
+            // already one hop deep off the `.health` TabRoute (see TabRoute.swift's own convention).
             if let illness = model.illnessSignal, illness.level != .quiet {
-                HeadsUpCard(result: illness, distance: model.illnessDistance)
+                NavigationLink {
+                    IllnessLadderView(result: illness, distance: model.illnessDistance)
+                } label: {
+                    HeadsUpCard(result: illness, distance: model.illnessDistance)
+                }
+                .buttonStyle(.plain)
             }
 
             // 2. Body clock — shows nil-state copy via the engine's own confidence handling.
@@ -1403,45 +1410,32 @@ private struct SkinTempSection: View {
 private struct HealthHubLinksSection: View {
     @EnvironmentObject var router: NavRouter
 
+    // Was two separate Button(NoopCard{...}) rows, each its own floating card. Both are plain
+    // navigational rows (icon → title/subtitle → chevron), so they're a textbook `GroupCard`/`GroupRow`
+    // pair — the six-card vocabulary's divided-list workhorse (#vivid-shimmying-pancake task 3). The
+    // `SectionHeader` stays as-is; `GroupCard` itself carries no title here (matches the More index's
+    // own `GroupCard { rows() }` pattern of keeping an external tappable/overline header separate).
     var body: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             SectionHeader("Records & sources", overline: "On \(Platform.deviceNounPhrase)")
-            linkRow(title: String(localized: "Lab Book"),
-                    subtitle: String(localized: "Keep your bloods, BP and body numbers private, on \(Platform.deviceNounPhrase)."),
-                    symbol: "books.vertical.fill", tint: StrandPalette.metricCyan) { router.openLabBook() }
-            linkRow(title: String(localized: "Your Data, Fused"),
-                    subtitle: String(localized: "The best-sourced number per metric across every band you use."),
-                    symbol: "square.stack.3d.up.fill", tint: StrandPalette.accent) { router.openFusedRecord() }
+            GroupCard {
+                linkRow(title: String(localized: "Lab Book"),
+                        subtitle: String(localized: "Keep your bloods, BP and body numbers private, on \(Platform.deviceNounPhrase)."),
+                        symbol: "books.vertical.fill", tint: StrandPalette.metricCyan) { router.openLabBook() }
+                linkRow(title: String(localized: "Your Data, Fused"),
+                        subtitle: String(localized: "The best-sourced number per metric across every band you use."),
+                        symbol: "square.stack.3d.up.fill", tint: StrandPalette.accent) { router.openFusedRecord() }
+            }
         }
     }
 
     private func linkRow(title: String, subtitle: String, symbol: String, tint: Color,
                          action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            NoopCard {
-                HStack(spacing: 12) {
-                    Image(systemName: symbol)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(tint)
-                        .frame(width: 30, height: 30)
-                        .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title).font(StrandFont.headline).foregroundStyle(StrandPalette.textPrimary)
-                        Text(subtitle)
-                            .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 8)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .accessibilityHidden(true)
-                }
-            }
+            GroupRow(leading: .icon(symbol, tint), title: LocalizedStringKey(title),
+                     subtitle: LocalizedStringKey(subtitle), showsChevron: true)
         }
-        // Liquid press response — every tappable liquid card settles inward on touch (matches Today).
-        .buttonStyle(LiquidPressStyle())
+        .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title). \(subtitle)")
     }

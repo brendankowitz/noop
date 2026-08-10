@@ -273,7 +273,10 @@ struct TrendsView: View {
                        // section reveal is unchanged; this only defers building that stack until it scrolls in.
                        onRefresh: { await repo.refresh() },
                        lazy: true,
-                       topBackground: liquidScaffoldSky()) {
+                       // Flat ink, not the sky (mockup's own rule: skies belong to Today/Sleep moments;
+                       // Trends/Health/More are archive, not a moment — "that is how you know which
+                       // half of the app you are in").
+                       topBackground: liquidFlatInkBackground()) {
             if repo.days.isEmpty {
                 ComingSoon(what: repo.loaded
                     ? "Trends need history to draw. Import your WHOOP export in Data Sources to see weeks, months and years instantly."

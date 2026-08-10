@@ -66,7 +66,9 @@ struct HRVSnapshotView: View {
 
     var body: some View {
         ScreenScaffold(title: "HRV Reading",
-                       subtitle: "A still, seated snapshot of your heart-rate variability") {
+                       subtitle: "A still, seated snapshot of your heart-rate variability",
+                       // A live capture moment, matching Live/Breathe — sky.
+                       topBackground: liquidScaffoldSky()) {
             statusRow
             captureCard
             controlRow

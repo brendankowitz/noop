@@ -284,16 +284,17 @@ private struct KeyMetricsCustomizationPage: View {
             onConfigure: { _ in },
             onReset: onReset
         ) {
-            Section("Display") {
-                Toggle(isOn: $detailed) {
-                    VStack(alignment: .leading, spacing: NoopMetrics.space1) {
-                        Text("Detailed tiles")
-                        Text("Show a trend graph beneath each metric.")
-                            .font(StrandFont.caption)
-                            .foregroundStyle(StrandPalette.textSecondary)
-                    }
+            // The old raw `Section("Display")` form group, converted to the shared `GroupCard`/
+            // `GroupRow` vocabulary: a titled card with one row (title/subtitle + a trailing Toggle,
+            // via `GroupRow`'s accessory slot) and the conditional segmented picker underneath.
+            GroupCard("Display") {
+                GroupRow(title: "Detailed tiles", subtitle: "Show a trend graph beneath each metric.") {
+                    Toggle("Detailed tiles", isOn: $detailed)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .tint(StrandPalette.accent)
+                        .accessibilityLabel("Detailed tiles")
                 }
-                .accessibilityLabel("Detailed tiles")
 
                 if detailed {
                     Picker("Trend window", selection: $windowDays) {
@@ -302,6 +303,7 @@ private struct KeyMetricsCustomizationPage: View {
                         Text("2 weeks").tag(14)
                     }
                     .pickerStyle(.segmented)
+                    .padding(.vertical, 12)
                 }
             }
         }

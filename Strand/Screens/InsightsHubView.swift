@@ -43,7 +43,9 @@ struct InsightsHubView: View {
                        // PERF (scroll): lazy column — byte-identical layout (LazyVStack == eager VStack
                        // alignment/spacing/header). The content is one inner eager VStack, so the staggered
                        // mover reveal is unchanged; this only defers building that stack until it scrolls in.
-                       lazy: true) {
+                       lazy: true,
+                       // Matches its sibling InsightsView — sky.
+                       topBackground: liquidScaffoldSky()) {
             if !model.loaded {
                 ComingSoon(what: "Reading your journal and outcomes…")
             } else {

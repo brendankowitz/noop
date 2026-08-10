@@ -28,6 +28,12 @@ struct NOOPProvider: TimelineProvider {
     }
 }
 
+/// The Glance tile's ambient wash tint: Charge's domain colour once scored, else a neutral grey.
+/// Shared by the tile background wash and `NOOPWidgetView.chargeColor` so the two never drift.
+private func glanceTint(for snap: WidgetSnapshot) -> Color {
+    snap.recovery != nil ? StrandPalette.chargeColor : StrandPalette.textTertiary
+}
+
 /// The glanceable widget — the iOS analogue of the macOS menu-bar extra.
 /// Home Screen families mirror Today's hero trio (Charge · Effort · Rest) as score rings; Lock Screen
 /// accessories stay compact single-line / gauge layouts.
@@ -57,9 +63,7 @@ struct NOOPWidgetView: View {
 
     // MARK: - Colours (match Today's GlowRing domain constants)
 
-    private var chargeColor: Color {
-        snap.recovery != nil ? StrandPalette.chargeColor : StrandPalette.textTertiary
-    }
+    private var chargeColor: Color { glanceTint(for: snap) }
 
     /// Fixed domain accent — same as `TodayView.effortRing` (`StrandPalette.effortColor`), not the
     /// value-sampled `effortTint` ramp the old footer bolt used.
@@ -321,6 +325,46 @@ private struct WidgetScoreRing: View {
     }
 }
 
+// MARK: - Glance tile background
+
+/// The Home Screen tile's own background — the mockup's "Glance" card: the same dark-glass diagonal
+/// fill `FrostedCardSurface`'s TINTED cards already deepen into (`cardFillTop` -> `cardFillBottom`,
+/// upstream's navy bevel / a fork's own override), plus a faint per-domain hue wash (the identical
+/// 0.05/0.015-opacity recipe `FrostedCardSurface` uses) and a resting hairline, at
+/// `NoopMetrics.widgetRadius` (the mockup's glance-tile radius, distinct from a card's 26 or a
+/// row's 24). Deliberately simpler than `FrostedCardSurface` itself: no shadow (WidgetKit snapshots
+/// the view and applies its own elevation) and no `@AppStorage` card-transparency read (a widget
+/// extension doesn't share the host app's live preference). Restyle only — replaces the old flat
+/// `StrandPalette.surfaceBase` fill; no new hex colors.
+///
+/// This view correctly *references* the shared tokens, so it inherits whatever palette the process
+/// has loaded — but as of this change it is dormant, not active: `NOOPiOSWidgets` is a separate
+/// `app-extension` target from the host app (see `project.yml`), its own OS process with its own
+/// memory, and only `Strand/App/StrandApp.swift` and `StrandiOS/App/StrandiOSApp.swift` call
+/// `HearthTheme.apply()`. The widget extension never calls it, so on any build today this tile still
+/// renders at the package-default 22pt radius with upstream Titanium/Gold `StrandPalette` colors, not
+/// Hearth's 34pt warm-paper look — it will self-heal automatically once a follow-up wires
+/// `HearthTheme.apply()` (plus its own font registration, since the extension has its own bundle)
+/// into the widget extension. That wiring is a separate, slightly riskier follow-up and is out of
+/// scope here.
+private struct GlanceTileBackground: View {
+    var tint: Color
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: NoopMetrics.widgetRadius, style: .continuous)
+        shape
+            .fill(LinearGradient(colors: [StrandPalette.cardFillTop, StrandPalette.cardFillBottom],
+                                  startPoint: .topLeading, endPoint: .bottomTrailing))
+            .overlay(
+                shape.fill(
+                    LinearGradient(colors: [tint.opacity(0.05), tint.opacity(0.015), .clear],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                )
+            )
+            .overlay(shape.strokeBorder(StrandPalette.hairline, lineWidth: 1))
+    }
+}
+
 struct NOOPWidget: Widget {
     let kind = "NOOPWidget"
 
@@ -328,11 +372,14 @@ struct NOOPWidget: Widget {
         StaticConfiguration(kind: kind, provider: NOOPProvider()) { entry in
             if #available(iOS 17.0, *) {
                 NOOPWidgetView(entry: entry)
-                    .containerBackground(StrandPalette.surfaceBase, for: .widget)
+                    .containerBackground(for: .widget) {
+                        GlanceTileBackground(tint: glanceTint(for: entry.snapshot))
+                    }
             } else {
                 NOOPWidgetView(entry: entry)
                     .padding()
-                    .background(StrandPalette.surfaceBase)
+                    .background(GlanceTileBackground(tint: glanceTint(for: entry.snapshot)))
+                    .clipShape(RoundedRectangle(cornerRadius: NoopMetrics.widgetRadius, style: .continuous))
             }
         }
         .configurationDisplayName("NOOP")

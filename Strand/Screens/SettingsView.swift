@@ -1405,19 +1405,12 @@ struct SettingsView: View {
             title: "Test Centre",
             blurb: "Turn on a test for the thing that's wrong, wear the strap, then tap Report. Your strap log, recalibrate, scheduled export and experimental probes all live here too."
         ) {
+            // A single navigational row -> the shared `GroupRow` anatomy (no `GroupCard` wrapper: this
+            // already lives inside `SettingsSection`'s own frosted card).
             NavigationLink(destination: TestCentreView()) {
-                HStack {
-                    Text("Open Test Centre")
-                        .font(StrandFont.body)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(StrandPalette.textTertiary)
-                }
-                .contentShape(Rectangle())
+                GroupRow(title: "Open Test Centre", showsChevron: true)
             }
-            .buttonStyle(LiquidPressStyle())
+            .buttonStyle(.plain)
             .accessibilityLabel("Open Test Centre")
         }
     }
@@ -2182,6 +2175,17 @@ struct SettingsView: View {
                 file: capture, fileSuggestedName: "noop-raw-capture-\(stamp).json",
                 text: live.exportableLogText(), textSuggestedName: "noop-strap-log-\(stamp).txt")
         }
+        let stamp = FileExport.timestamp()
+        rawAndLogBusy = true
+        Task {
+            // `defer` so the flag is cleared on ANY exit (#961 follow-up), including cancellation. It
+            // cleared correctly before, but only because `exportPair` is non-throwing — the guard should
+            // not depend on that. Otherwise the button stays disabled behind a spinner that never stops.
+            defer { rawAndLogBusy = false }
+            await FileExport.exportPair(
+                file: capture, fileSuggestedName: "noop-raw-capture-\(stamp).json",
+                text: live.exportableLogText(), textSuggestedName: "noop-strap-log-\(stamp).txt")
+        }
     }
 
     #if os(macOS)
@@ -2393,132 +2397,80 @@ struct SettingsView: View {
                     }
                 }
 
-                // How NOOP works — the plain-English primer: how sleep is sorted, how scores +
-                // calibration work, what recording means, and where the provenance badges come
-                // from. The "?" entry point to the four-section explainability primer.
-                Button {
-                    showHowNoopWorks = true
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "questionmark.circle")
-                            .foregroundStyle(StrandPalette.accent)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("How NOOP works")
-                                .font(StrandFont.body)
-                                .foregroundStyle(StrandPalette.textPrimary)
-                            Text("Sleep sorting, scores, recording, and where your numbers come from.")
-                                .font(StrandFont.footnote)
-                                .foregroundStyle(StrandPalette.textTertiary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(StrandPalette.textTertiary)
-                            .accessibilityHidden(true)
+                // How NOOP works / How your scores work / About Apple Watch data / Storage / (iOS)
+                // Diagnostics are five plain navigational rows — icon -> title/subtitle -> chevron —
+                // that were each a hand-rolled HStack. That's the exact `GroupRow` anatomy, so they move
+                // onto it (#vivid-shimmying-pancake task 3). Kept as bare rows in a zero-spacing VStack
+                // (flush hairlines, no gap) rather than wrapped in a `GroupCard`: this content already
+                // lives inside the section's own `StrandCard` frosted surface, and `GroupCard` draws its
+                // own — nesting the two would double the glass.
+                VStack(alignment: .leading, spacing: 0) {
+                    // How NOOP works — the plain-English primer: how sleep is sorted, how scores +
+                    // calibration work, what recording means, and where the provenance badges come
+                    // from. The "?" entry point to the four-section explainability primer.
+                    Button {
+                        showHowNoopWorks = true
+                    } label: {
+                        GroupRow(leading: .icon("questionmark.circle", StrandPalette.accent),
+                                 title: "How NOOP works",
+                                 subtitle: "Sleep sorting, scores, recording, and where your numbers come from.",
+                                 showsChevron: true)
                     }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(LiquidPressStyle())
-                .accessibilityLabel("How NOOP works")
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("How NOOP works")
 
-                // How your scores work — the honest explainer for Charge / Effort / Rest and the
-                // confidence labels. Always reachable here, mirroring the "What's new" affordance.
-                Button {
-                    showScoringGuide = true
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "questionmark.circle")
-                            .foregroundStyle(StrandPalette.accent)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("How your scores work")
-                                .font(StrandFont.body)
-                                .foregroundStyle(StrandPalette.textPrimary)
-                            Text("Charge, Effort and Rest (and how they differ from WHOOP).")
-                                .font(StrandFont.footnote)
-                                .foregroundStyle(StrandPalette.textTertiary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(StrandPalette.textTertiary)
-                            .accessibilityHidden(true)
+                    // How your scores work — the honest explainer for Charge / Effort / Rest and the
+                    // confidence labels. Always reachable here, mirroring the "What's new" affordance.
+                    Button {
+                        showScoringGuide = true
+                    } label: {
+                        GroupRow(leading: .icon("questionmark.circle", StrandPalette.accent),
+                                 title: "How your scores work",
+                                 subtitle: "Charge, Effort and Rest (and how they differ from WHOOP).",
+                                 showsChevron: true)
                     }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(LiquidPressStyle())
-                .accessibilityLabel("How your scores work")
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("How your scores work")
 
-                // About Apple Watch data: the honest capability/confidence page for running NOOP off
-                // just an Apple Watch (what it's great at, where it's lighter than a strap, why recovery
-                // calibrates, the SpO₂ caveat). Its primary action opens the watch setup + Health
-                // permission flow. Renders the same on macOS and iOS (pure reference content); the setup
-                // sheet itself does the iOS-only HealthKit request.
-                NavigationLink {
-                    AppleWatchAboutView(onStartSetup: { showAppleWatchSetup = true })
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "applewatch")
-                            .foregroundStyle(StrandPalette.accent)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("About Apple Watch data")
-                                .font(StrandFont.body)
-                                .foregroundStyle(StrandPalette.textPrimary)
-                            Text("Use NOOP with just an Apple Watch. What it's great at, and where it's lighter than a strap.")
-                                .font(StrandFont.footnote)
-                                .foregroundStyle(StrandPalette.textTertiary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(StrandPalette.textTertiary)
-                            .accessibilityHidden(true)
+                    // About Apple Watch data: the honest capability/confidence page for running NOOP off
+                    // just an Apple Watch (what it's great at, where it's lighter than a strap, why recovery
+                    // calibrates, the SpO₂ caveat). Its primary action opens the watch setup + Health
+                    // permission flow. Renders the same on macOS and iOS (pure reference content); the setup
+                    // sheet itself does the iOS-only HealthKit request.
+                    NavigationLink {
+                        AppleWatchAboutView(onStartSetup: { showAppleWatchSetup = true })
+                    } label: {
+                        GroupRow(leading: .icon("applewatch", StrandPalette.accent),
+                                 title: "About Apple Watch data",
+                                 subtitle: "Use NOOP with just an Apple Watch. What it's great at, and where it's lighter than a strap.",
+                                 showsChevron: true)
                     }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(LiquidPressStyle())
-                .accessibilityLabel("About Apple Watch data")
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("About Apple Watch data")
 
-                // Storage (#590) — on-device space breakdown (database, leftover import Inbox, stranded
-                // temp files) plus a one-tap clean-up. iOS is where "Documents & Data" can balloon after
-                // an Apple Health import; it compiles + reads fine on macOS too, so the link is unconditional.
-                NavigationLink {
-                    StorageView()
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "internaldrive")
-                            .foregroundStyle(StrandPalette.accent)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Storage")
-                                .font(StrandFont.body)
-                                .foregroundStyle(StrandPalette.textPrimary)
-                            Text("Where NOOP's on-device space is going, and a one-tap clean-up.")
-                                .font(StrandFont.footnote)
-                                .foregroundStyle(StrandPalette.textTertiary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(StrandPalette.textTertiary)
-                            .accessibilityHidden(true)
+                    // Storage (#590) — on-device space breakdown (database, leftover import Inbox, stranded
+                    // temp files) plus a one-tap clean-up. iOS is where "Documents & Data" can balloon after
+                    // an Apple Health import; it compiles + reads fine on macOS too, so the link is unconditional.
+                    NavigationLink {
+                        StorageView()
+                    } label: {
+                        GroupRow(leading: .icon("internaldrive", StrandPalette.accent),
+                                 title: "Storage",
+                                 subtitle: "Where NOOP's on-device space is going, and a one-tap clean-up.",
+                                 showsChevron: true)
                     }
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Storage")
+
+                    #if os(iOS)
+                    // iOS reality & diagnostics — a one-tap environment dump (device, iOS+build, Data
+                    // Protection, background refresh, low-power, sideload expiry) for bug reports.
+                    iosDiagnosticsRow
+                    #endif
                 }
-                .buttonStyle(LiquidPressStyle())
-                .accessibilityLabel("Storage")
 
                 #if os(iOS)
-                // iOS reality & diagnostics — honest expectations for a sideloaded iPhone build, plus a
-                // one-tap environment dump (device, iOS+build, Data Protection, background refresh,
-                // low-power, sideload expiry) for bug reports. iOS-only; macOS doesn't have these gotchas.
-                iosDiagnosticsRow
+                // Honest expectations for a sideloaded iPhone build (not a row — a multi-line callout).
                 iphoneExpectations
                 #endif
 
@@ -2593,29 +2545,20 @@ struct SettingsView: View {
                         .foregroundStyle(StrandPalette.textTertiary)
                 }
 
-                // Project home — NOOP's code, releases, issues and wiki live on GitHub.
+                // Project home — NOOP's code, releases, issues and wiki live on GitHub. Same `GroupRow`
+                // anatomy as the nav rows above, with the external-link glyph in the accessory slot
+                // instead of `showsChevron` (this leaves the app rather than pushing a destination).
                 Link(destination: URL(string: "https://github.com/ryanbr/noop")!) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "chevron.left.forwardslash.chevron.right")
-                            .foregroundStyle(StrandPalette.accent)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Project home & source")
-                                .font(StrandFont.body)
-                                .foregroundStyle(StrandPalette.textPrimary)
-                            Text("GitHub: code, releases, issues and the wiki.")
-                                .font(StrandFont.footnote)
-                                .foregroundStyle(StrandPalette.textTertiary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer()
+                    GroupRow(leading: .icon("chevron.left.forwardslash.chevron.right", StrandPalette.accent),
+                             title: "Project home & source",
+                             subtitle: "GitHub: code, releases, issues and the wiki.") {
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(StrandPalette.textTertiary)
                             .accessibilityHidden(true)
                     }
-                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 .accessibilityLabel("Project home and source code on GitHub")
 
                 Text("A standalone companion for your WHOOP. Everything stays on this device: your history, your live stream, your numbers. Nothing is uploaded. NOOP is an independent, experimental project, not the WHOOP app.")
@@ -2682,28 +2625,12 @@ struct SettingsView: View {
         Button {
             showDiagnostics = true
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "stethoscope")
-                    .foregroundStyle(StrandPalette.accent)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Diagnostics")
-                        .font(StrandFont.body)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                    Text("Device, iOS build, Data Protection and sideload status, for bug reports.")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(StrandPalette.textTertiary)
-                    .accessibilityHidden(true)
-            }
-            .contentShape(Rectangle())
+            GroupRow(leading: .icon("stethoscope", StrandPalette.accent),
+                     title: "Diagnostics",
+                     subtitle: "Device, iOS build, Data Protection and sideload status, for bug reports.",
+                     showsChevron: true)
         }
-        .buttonStyle(LiquidPressStyle())
+        .buttonStyle(.plain)
         .accessibilityLabel("Diagnostics")
     }
 

@@ -50,7 +50,11 @@ struct AutomationsView: View {
                        // PERF: the cards are direct children of the scaffold column, so the LazyVStack
                        // path (byte-identical layout) genuinely builds the off-screen cards on demand
                        // instead of constructing all eight/nine + their toggle subtrees up-front.
-                       lazy: true) {
+                       lazy: true,
+                       // A settings-adjacent config screen, not a data archive — sky, matching
+                       // Settings/DataSources/Devices (the mockup's flat-ink rule is scoped to
+                       // Trends/Health specifically, not every utility screen).
+                       topBackground: liquidScaffoldSky()) {
             #if os(iOS)
             wristAlertsCard
             #endif

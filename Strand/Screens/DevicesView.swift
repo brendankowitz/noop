@@ -1464,6 +1464,84 @@ private struct EcgProbeResultView: View {
     }
 }
 
+/// The wrist-selection step: the one ECG command that writes strap state outliving the session, so it
+/// gets its own screen, its own warning, and its own confirmation rather than a button inside the start
+/// flow. The copy names both caveats plainly — that the value persists on the strap, and that the
+/// left/right mapping is read off the order in WHOOP's own app rather than verified on hardware.
+private struct EcgWristSheet: View {
+    let onPick: (Whoop5Ecg.WristSelection) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Which wrist do you wear it on?")
+                .font(StrandFont.title2)
+                .foregroundStyle(StrandPalette.textPrimary)
+            Text("This one is different from the other ECG controls: it is a setting written to the strap, and it stays there after you disconnect until you change it again.")
+                .font(StrandFont.subhead)
+                .foregroundStyle(StrandPalette.statusWarning)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("It is also not fully confirmed. Which value means “left” and which means “right” is read off the order they appear in WHOOP's own app, not verified on a strap — so it may set the opposite wrist. You can send it again with the other choice at any time, and it changes nothing about your recorded data.")
+                .font(StrandFont.caption)
+                .foregroundStyle(StrandPalette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: NoopMetrics.space3) {
+                Button("Left wrist") { onPick(.left) }
+                Button("Right wrist") { onPick(.right) }
+                Spacer()
+                Button("Cancel", role: .cancel) { onCancel() }
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 340, minHeight: 220)
+        .background(StrandPalette.surfaceOverlay)
+    }
+}
+
+/// The MG ECG probe's report (verdict + per-command outcomes + candidate packet lines), or a "waiting…"
+/// state while the listen window is open. Read-only, selectable, copyable — structurally identical to
+/// `BodyLocationProbeResultView`, with the non-medical framing pinned above the text so it is read first.
+private struct EcgProbeResultView: View {
+    let text: String
+    let onClose: () -> Void
+    private var waiting: Bool { text == BLEManager.ecgProbeWaiting }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("ECG capture probe result")
+                .font(StrandFont.title2)
+                .foregroundStyle(StrandPalette.textPrimary)
+            Text("Unvalidated instrumentation, not a medical measurement and not a diagnosis.")
+                .font(StrandFont.caption)
+                .foregroundStyle(StrandPalette.statusWarning)
+                .fixedSize(horizontal: false, vertical: true)
+            if waiting {
+                Text("Listening for the strap's reply…")
+                    .font(StrandFont.subhead)
+                    .foregroundStyle(StrandPalette.textSecondary)
+            } else {
+                ScrollView {
+                    Text(text)
+                        .font(StrandFont.mono)
+                        .foregroundStyle(StrandPalette.textSecondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            HStack {
+                if !waiting {
+                    Button("Copy") { PlatformPasteboard.copy(text) }
+                }
+                Spacer()
+                Button("Close") { onClose() }
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 340, minHeight: 260)
+        .background(StrandPalette.surfaceOverlay)
+    }
+}
+
 /// #103: the READ-ONLY device-config read probe's confirm + result dialogs, isolated into a
 /// ViewModifier for the same reason `FeatureFlagProbeSheets` is — keeping the DevicesView
 /// `.confirmationDialog`/`.sheet` chain inside the iOS Swift type-checker's budget.

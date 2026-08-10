@@ -95,6 +95,9 @@ remains available as a fallback.
 - **GRDB.swift** (`groue/GRDB.swift`) — SQLite persistence (via Swift Package Manager).
 - **MarkdownUI** (`gonzalezreal/swift-markdown-ui`) — renders the AI Coach's Markdown
   replies (via Swift Package Manager).
+- **Work Sans** (`weiweihuanghuang/Work-Sans`) and **Source Serif 4** (`adobe-fonts/source-serif`) —
+  bundled typefaces for the bknoop fork's "Hearth" retheme (`Strand/Resources/Fonts/`), both
+  SIL Open Font License 1.1; license text bundled alongside the font files.
 
 NOOP contains no WHOOP proprietary code, binaries, firmware, logos, or assets, and
 performs no DRM circumvention. It operates only with the user's own device and data.

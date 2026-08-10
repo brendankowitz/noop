@@ -5,6 +5,9 @@ import UserNotifications
 @main
 struct StrandApp: App {
     init() {
+        // bknoop Hearth retheme: MUST be the first line — registers bundled fonts and overrides
+        // StrandPalette/StrandFont before anything else in this init (or any view) reads a token.
+        HearthTheme.apply()
         // #1008: pin the pre-change Overnight-only default for existing installs before
         // anything reads it. Idempotent; a no-op on fresh installs and after the first launch.
         PuffinExperiment.migrateContinuousHrvOvernightDefault()

@@ -15,7 +15,7 @@ public extension View {
     /// wash + border bias; nil uses the flat raised surface with no wash.
     func frostedCardSurface(
         tint: Color? = nil,
-        cornerRadius: CGFloat = 22,
+        cornerRadius: CGFloat = NoopMetrics.cardRadius,
         washStrength: Double = 1.0
     ) -> some View {
         background(FrostedCardSurface(tint: tint, cornerRadius: cornerRadius, washStrength: washStrength))
@@ -29,24 +29,63 @@ public struct FrostedCardSurface: View {
     public var tint: Color?
     public var cornerRadius: CGFloat
     public var washStrength: Double
+    @Environment(\.colorScheme) private var scheme
     // "Card transparency" setting (reactive): fades the whole glass surface toward the background. 100 =
     // solid (default). Reading it here makes every card update live when the Settings slider moves.
     @AppStorage(CardAppearancePrefs.opacityKey) private var cardOpacityPercent = CardAppearancePrefs.defaultPercent
 
-    public init(tint: Color? = nil, cornerRadius: CGFloat = 22, washStrength: Double = 1.0) {
+    public init(tint: Color? = nil, cornerRadius: CGFloat = NoopMetrics.cardRadius, washStrength: Double = 1.0) {
         self.tint = tint
         self.cornerRadius = cornerRadius
         self.washStrength = washStrength
     }
 
+    private var shadowActive: Bool { StrandPalette.cardShadowAlwaysOn || scheme == .light }
+
     public var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         let op = max(0.0, min(1.0, Double(cardOpacityPercent) / 100.0))
-        NoopPanelSurface(
-            tint: tint?.opacity(washStrength),
-            cornerRadius: cornerRadius,
-            elevated: false,
-            surfaceOpacity: op
-        )
+        // Base fill: tinted cards deepen into the 150° navy bevel (#15243C → #0B1424,
+        // = surfaceOverlay → cardFillBottom); neutral cards sit on the flat raised
+        // surface. The 150° axis ≈ top-trailing → bottom-leading.
+        // Design Reset: a flat raised fill reads cleaner than the navy bevel gradient. Tinted and
+        // neutral cards now share the same flat surface; tint identity is carried by the softened
+        // hue wash + the tinted hairline below, not a gradient, so cards stay familiar but flatten.
+        let baseFill = AnyShapeStyle(StrandPalette.surfaceRaised)
+        shape
+            .fill(baseFill)
+            .overlay(
+                // A faint per-domain hue wash — only on tinted cards; neutral stays flat.
+                shape.fill(
+                    LinearGradient(
+                        colors: [
+                            (tint ?? .clear).opacity(0.05 * washStrength),
+                            (tint ?? .clear).opacity(0.015 * washStrength),
+                            .clear
+                        ],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                )
+            )
+            // Liquid redesign (2026-07-02): a 1px resting hairline in BOTH themes so every card
+            // matches the liquid home card's edge (LiquidTodayView.card), not just fill contrast.
+            .overlay(shape.strokeBorder(StrandPalette.hairline, lineWidth: 1))
+            // LIGHT raises white cards off the warm-paper canvas with a soft resting drop shadow; DARK
+            // stays flat (the hairline + fill carry the edge, matching the home card which has no shadow)
+            // — UNLESS `cardShadowAlwaysOn` is set (a fork whose chrome doesn't vary by system
+            // appearance forces it on regardless of `scheme`). Two layered shadows, matching the exact
+            // documented recipe: a tight 1px/2px-blur wash plus a soft 10px/24px-blur lift.
+            .shadow(
+                color: shadowActive ? StrandPalette.cardShadowColor.opacity(0.04) : .clear,
+                radius: shadowActive ? 1 : 0, x: 0, y: shadowActive ? 1 : 0
+            )
+            .shadow(
+                color: shadowActive ? StrandPalette.cardShadowColor.opacity(0.045) : .clear,
+                radius: shadowActive ? 12 : 0, x: 0, y: shadowActive ? 10 : 0
+            )
+            // "Card transparency": fade the whole glass surface. The card's content sits above this
+            // background, so it stays fully readable regardless.
+            .opacity(op)
     }
 }
 
@@ -66,7 +105,7 @@ public struct StrandCard<Content: View>: View {
 
     public init(
         padding: CGFloat = 16,
-        cornerRadius: CGFloat = 22,
+        cornerRadius: CGFloat = NoopMetrics.cardRadius,
         tint: Color? = nil,
         @ViewBuilder content: @escaping () -> Content
     ) {
@@ -94,7 +133,7 @@ public struct StrandCardHover: ViewModifier {
     @State private var hovering = false
     @Environment(\.colorScheme) private var scheme
 
-    public init(cornerRadius: CGFloat = 22) {
+    public init(cornerRadius: CGFloat = NoopMetrics.cardRadius) {
         self.cornerRadius = cornerRadius
     }
 
@@ -110,11 +149,11 @@ public struct StrandCardHover: ViewModifier {
             // Incremental hover lift on top of the surface's resting elevation: a warm soft shadow on
             // light (the white card lifts off the paper), the signature black on dark.
             .shadow(
-                color: hovering ? (scheme == .light ? Color(hex: "#1A2230").opacity(0.16)
+                color: hovering ? ((StrandPalette.cardShadowAlwaysOn || scheme == .light) ? StrandPalette.cardShadowColor.opacity(0.16)
                                                      : Color.black.opacity(0.45)) : .clear,
-                radius: hovering ? (scheme == .light ? 14 : 16) : 0,
+                radius: hovering ? ((StrandPalette.cardShadowAlwaysOn || scheme == .light) ? 14 : 16) : 0,
                 x: 0,
-                y: hovering ? (scheme == .light ? 6 : 10) : 0
+                y: hovering ? ((StrandPalette.cardShadowAlwaysOn || scheme == .light) ? 6 : 10) : 0
             )
             .offset(y: hovering ? -1 : 0)
             .animation(StrandMotion.interactive, value: hovering)
@@ -127,7 +166,7 @@ public struct StrandCardHover: ViewModifier {
 
 public extension View {
     /// Apply the Strand card hover lift (shadow + -1px translate + border emphasis).
-    func strandCardHover(cornerRadius: CGFloat = 22) -> some View {
+    func strandCardHover(cornerRadius: CGFloat = NoopMetrics.cardRadius) -> some View {
         modifier(StrandCardHover(cornerRadius: cornerRadius))
     }
 }

@@ -1515,7 +1515,9 @@ final class AppModel: ObservableObject {
 
     private func evaluateIllness(_ days: [DailyMetric]) {
         guard behavior.illnessWatch, days.count >= 14 else {
-            healthAlert = nil; illnessSignal = nil; illnessDistance = nil; return
+            healthAlert = nil; illnessSignal = nil; illnessDistance = nil
+            IllnessAlarmState.shared.update(from: nil)
+            return
         }
         Task { [weak self] in
             guard let self else { return }
@@ -1611,6 +1613,7 @@ final class AppModel: ObservableObject {
 
         let result = IllnessSignalEngine.evaluate(inputs, context: context, firedLabels: labels)
         illnessSignal = result
+        IllnessAlarmState.shared.update(from: result)
         // The amber banner string reflects the raised / already-unwell levels only (the calmer levels
         // surface in the Health hub's Heads-Up card, never as a scary banner).
         healthAlert = (result.level == .raised || result.level == .alreadyUnwell) ? result.copy : nil

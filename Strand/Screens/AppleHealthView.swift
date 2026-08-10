@@ -201,7 +201,9 @@ struct AppleHealthView: View {
                        // inner VStack(spacing: sectionGap=22) to preserve the 22pt inter-section spacing
                        // (the scaffold stack is 20pt), so the lazy win is partial until those sections are
                        // promoted to direct children — kept as one node here to stay pixel-identical.
-                       lazy: true) {
+                       lazy: true,
+                       // Archive/reference, not a lived moment — flat ink, matching Trends/Health.
+                       topBackground: liquidFlatInkBackground()) {
             if loaded && !hasAnyData {
                 #if os(iOS)
                 // No data yet, but iOS can grant live access right here — keep the Enable card above

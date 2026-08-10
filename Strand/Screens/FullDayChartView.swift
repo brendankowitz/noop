@@ -82,7 +82,9 @@ struct FullDayChartView: View {
     private var visibleWindow: ClosedRange<Date> { zoomDomain ?? dayBounds }
 
     var body: some View {
-        ScreenScaffold(title: "Deep Timeline", subtitle: "Every second of your day, zoomable.") {
+        ScreenScaffold(title: "Deep Timeline", subtitle: "Every second of your day, zoomable.",
+                       // A zoomable raw-data chart — flat ink, matching Trends.
+                       topBackground: liquidFlatInkBackground()) {
             metricPills
             dayNav
             sourcePill

@@ -31,6 +31,10 @@ struct LiquidTodayView: View {
     /// environment key, hence the shared monitor.
     @ObservedObject private var motion = NoopMotionState.shared
     private var poseStill: Bool { motion.poseStill(reduceMotion) }
+    /// The illness ladder's Major rung swaps the sky for the mockup's alarm gradient — see
+    /// `IllnessAlarmState`'s own doc comment for why this is a dedicated singleton rather than a full
+    /// `AppModel` subscription.
+    @ObservedObject private var illnessAlarm = IllnessAlarmState.shared
 
     /// Shared with the real Today's card-customise editor so the two stay in sync.
     @AppStorage(DashboardCardPrefs.selectionKey) private var dashboardCardsRaw = ""
@@ -61,6 +65,14 @@ struct LiquidTodayView: View {
     @State private var showSettings = false
     @State private var synthesisExpanded = false
     @State private var showLiveSession = false
+    /// The hero ring rail's currently focused score — the kSparks key of one of the three REAL scores
+    /// ("recovery" / "strain" / "sleep_performance"), or nil for the default unfocused hero. Tapping a
+    /// ring toggles this; the focused state reveals a 14-day sparkline from `kSparks` + an honest read.
+    @State private var focusedMetric: String? = nil
+    /// The hero rail's viewport width, captured so the three-ring rail can CENTRE within the card when it
+    /// fits (the default reads balanced, like the old fixed row) yet still scroll if it ever overflows
+    /// (small screens / large Dynamic Type). 0 until first layout — content sizes naturally until then.
+    @State private var heroRailWidth: CGFloat = 0
 
     /// Live Sessions (silent guardian) beta gate — the SAME key the Settings toggle writes. Default ON
     /// (the entry is BETA-labelled in-UI); off removes the Start-session control entirely.
@@ -118,10 +130,9 @@ struct LiquidTodayView: View {
     private let liquidPurple = Color(.sRGB, red: 0x9b / 255, green: 0x7b / 255, blue: 0xff / 255, opacity: 1)
     /// The liquid heart pink (matches LiquidThread's default + the mockup #ff6b81).
     private let liquidHeart = Color(.sRGB, red: 1, green: 107 / 255, blue: 129 / 255, opacity: 1)
-    /// Hero / session-start chrome uses theme-aware `NoopPanelSurface` (design-system surfaces that
-    /// flip with Light/Dark). Upstream #1160/#1161 moved the classic RoundedRectangle hero onto
-    /// `StrandPalette.heroFill` / `heroBorder` for the same theme-aware goal; #1068 keeps the panel
-    /// surface treatment while preserving that Light/Dark readability.
+    /// Hero card fill: a translucent near-black so it floats over the sky. Hearth warms this from the
+    /// original cool navy-black to the mockup's ink (#16150F) — same scheme-invariant 0.80 opacity.
+    private let heroFill = Color(.sRGB, red: 22 / 255, green: 21 / 255, blue: 15 / 255, opacity: 0.80)
     /// "Card transparency" (0–100, default 100): fades every liquid card surface here — the hero, the
     /// session-start row, the metric tiles and the `card` helper — in lockstep with the frosted cards.
     /// Content sits above the surface so it stays readable. Mirrors Kotlin `NoopPrefs.cardOpacityPercent`.
@@ -340,6 +351,13 @@ struct LiquidTodayView: View {
             }
             .ignoresSafeArea()
         }
+        // Swap the sky for the mockup's alarm gradient at the illness ladder's Major rung, and back
+        // the moment it clears. `onAppear` covers the case where the app launches already-major (e.g.
+        // resumed mid-alert); `onChange` covers a live level crossing while Today is on screen.
+        .onAppear { liquidSkyOverride = illnessAlarm.isMajor ? HearthTheme.alarmSkyStop : nil }
+        .onChangeCompat(of: illnessAlarm.isMajor) { major in
+            liquidSkyOverride = major ? HearthTheme.alarmSkyStop : nil
+        }
         // Swipe left/right to change DAYS (WHOOP-style). Tab-swipe is disabled on Today in RootTabView so
         // this owns the horizontal gesture here.
         .simultaneousGesture(daySwipeGesture)
@@ -535,41 +553,182 @@ struct LiquidTodayView: View {
         .accessibilityLabel("Start a live session. Beta. Silent strap coaching against today's Charge.")
     }
 
-    private var heroCard: some View {
-        HStack(alignment: .top, spacing: 4) {
+    /// The three REAL top-level scores NOOP computes, in hero order. `key` is the `kSparks` key each
+    /// score's 14-day series is banked under (the loader keys them by metric-catalog key). There is no
+    /// 4th/5th entry: the app computes exactly Charge / Effort / Rest and the hero shows exactly those
+    /// (anti-fabrication — no invented score gets a ring).
+    private struct HeroScore: Identifiable {
+        let section: ScoreSection      // .charge / .effort / .rest — carries the guide + display name
+        let key: String                // kSparks key: "recovery" / "strain" / "sleep_performance"
+        let label: String
+        let score: Double?             // on the scale the ring draws (nil = no data yet → empty ring)
+        let tint: Color
+        var maxValue: Double = 100
+        var decimals: Int = 0
+        var id: String { key }
+    }
+
+    private var heroScores: [HeroScore] {
+        [
             // #543 carry: an unscored today shows the last scored night's REAL Charge (labelled as prior by
-            // the state pill) rather than an empty vessel, matching the classic Today, the widget/watch/Live
+            // the state pill) rather than an empty ring, matching the classic Today, the widget/watch/Live
             // Activity (`Repository.widgetAnchor`) and Android. Effort deliberately does NOT carry — it is
             // today's own accumulation, so yesterday's number would be a false statement, not a stale one.
-            HeroScoreCell(label: String(localized: "Charge"), score: chargeDisplay.pct, tint: StrandPalette.chargeColor,
-                          animated: dataLoaded, onGuide: { guideSection = .charge })
+            HeroScore(section: .charge, key: "recovery", label: String(localized: "Charge"),
+                      score: chargeDisplay.pct, tint: StrandPalette.chargeColor),
             // #45: the hero Effort must honour the user's Effort scale like every other Effort read-out.
-            // Show the value on the chosen scale (0–100 or WHOOP 0–21) with the matching vessel max, and
-            // one decimal on the compressed 0–21 axis to match the app-wide `effortDisplay` convention
-            // (12.6, not a rounded "13"); the 0–100 hero stays a whole number as before.
-            HeroScoreCell(label: String(localized: "Effort"),
-                          score: displayDay?.strain.map { UnitFormatter.effortValue($0, scale: effortScale) },
-                          tint: StrandPalette.effortColor, animated: dataLoaded,
-                          onGuide: { guideSection = .effort },
-                          maxValue: effortScale == .whoop ? 21 : 100,
-                          decimals: effortScale == .whoop ? 1 : 0)
-            HeroScoreCell(label: String(localized: "Rest"), score: restScore, tint: StrandPalette.restColor,
-                          animated: dataLoaded, onGuide: { guideSection = .rest })
-                .overlay(alignment: .top) {
-                    if let sourceLabel = heroSourceLabel {
-                        SourceBadge("\(sourceLabel)", tint: StrandPalette.textSecondary)
-                            // Match the badge's trailing edge to the Rest vessel and centre it on the card border.
-                            .fixedSize()
-                            .frame(width: HeroScoreCell.vesselDiameter, alignment: .trailing)
-                            .offset(y: -(NoopMetrics.space4 + NoopMetrics.sourceBadgeHeight / 2))
-                            .allowsHitTesting(false)
-                            .accessibilityLabel(Text("Source: \(sourceLabel)"))
-                    }
-                }
+            // Show the value on the chosen scale (0–100 or WHOOP 0–21) with the matching ring max, and one
+            // decimal on the compressed 0–21 axis to match the app-wide `effortDisplay` convention (12.6,
+            // not a rounded "13"); the 0–100 hero stays a whole number as before.
+            HeroScore(section: .effort, key: "strain", label: String(localized: "Effort"),
+                      score: displayDay?.strain.map { UnitFormatter.effortValue($0, scale: effortScale) },
+                      tint: StrandPalette.effortColor,
+                      maxValue: effortScale == .whoop ? 21 : 100,
+                      decimals: effortScale == .whoop ? 1 : 0),
+            HeroScore(section: .rest, key: "sleep_performance", label: String(localized: "Rest"),
+                      score: restScore, tint: StrandPalette.restColor),
+        ]
+    }
+
+    private var heroCard: some View {
+        VStack(spacing: 0) {
+            scoreRail
+            // Focused state: below the rail, an honest per-metric read + a 14-day sparkline from the REAL
+            // banked series. Absent in the default view, so the unfocused hero reads exactly as before.
+            if let focused = heroScores.first(where: { $0.key == focusedMetric }) {
+                heroFocusDetail(focused)
+                    .padding(.top, 14)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
         .padding(.vertical, NoopMetrics.space4)
         .padding(.horizontal, NoopMetrics.space3)
-        .background(NoopPanelSurface(cornerRadius: 26, elevated: true, surfaceOpacity: cardOpacity))
+        .background(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(heroFill)
+                .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .strokeBorder(.white.opacity(0.11), lineWidth: 1))
+                .shadow(color: .black.opacity(0.6), radius: 30, y: 16)
+                .opacity(cardOpacity)
+        )
+        // One card-level provenance badge (names the sensors/imports behind the scores). Straddles the top
+        // border like before, now pinned to the card's trailing corner instead of the Rest ring — the rail
+        // can scroll, so a badge anchored to one cell would drift off with it.
+        .overlay(alignment: .topTrailing) {
+            if let sourceLabel = heroSourceLabel {
+                SourceBadge("\(sourceLabel)", tint: StrandPalette.onDarkSecondary)
+                    .fixedSize()
+                    .offset(x: -NoopMetrics.space3, y: -(NoopMetrics.sourceBadgeHeight / 2))
+                    .allowsHitTesting(false)
+                    .accessibilityLabel(Text("Source: \(sourceLabel)"))
+            }
+        }
+        // A light tick when a ring focuses/unfocuses — the rail should feel physical like the day nav.
+        .liquidSelectionHaptic(trigger: focusedMetric)
+    }
+
+    /// The horizontal ring rail: one `HeroScoreCell` per real score, individually tappable to focus.
+    /// A `ScrollView(.horizontal)` so it can scroll on a narrow width / large Dynamic Type; the inner row
+    /// takes a `minWidth` of the viewport so with the three rings that fit today it CENTRES (reads like the
+    /// old evenly-spread fixed row) rather than jamming to the leading edge.
+    private var scoreRail: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 14) {
+                ForEach(heroScores) { s in
+                    HeroScoreCell(label: s.label, score: s.score, tint: s.tint,
+                                  animated: dataLoaded, focused: focusedMetric == s.key,
+                                  onTap: { toggleHeroFocus(s.key) },
+                                  maxValue: s.maxValue, decimals: s.decimals)
+                }
+            }
+            .frame(minWidth: heroRailWidth, alignment: .center)
+            .padding(.horizontal, 2)
+        }
+        .background(GeometryReader { g in
+            Color.clear.preference(key: HeroRailWidthKey.self, value: g.size.width)
+        })
+        .onPreferenceChange(HeroRailWidthKey.self) { heroRailWidth = $0 }
+    }
+
+    private func toggleHeroFocus(_ key: String) {
+        withAnimation(.easeInOut(duration: 0.22)) {
+            focusedMetric = (focusedMetric == key) ? nil : key
+        }
+    }
+
+    /// The focused-ring detail shown under the rail: the live value, a 14-day sparkline from the REAL
+    /// `kSparks` series, an honest per-metric read, and both a "See how it is scored" route and a "Back to
+    /// now" affordance that clears the focus.
+    private func heroFocusDetail(_ s: HeroScore) -> some View {
+        let values = heroFocusSpark(s)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(s.section.displayName.uppercased())
+                    .font(StrandFont.overline).tracking(1.6)
+                    .foregroundStyle(StrandPalette.onDarkSecondary)
+                if let score = s.score {
+                    Text(s.decimals > 0 ? String(format: "%.\(s.decimals)f", score) : String(Int(score.rounded())))
+                        .font(StrandFont.rounded(19)).foregroundStyle(StrandPalette.onDarkPrimary)
+                }
+                Spacer(minLength: 8)
+                Button { toggleHeroFocus(s.key) } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.uturn.backward").font(.system(size: 9, weight: .semibold))
+                        Text("Back to now").font(StrandFont.caption)
+                    }
+                    .foregroundStyle(StrandPalette.onDarkSecondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back to now. Closes the \(s.section.displayName) trend.")
+            }
+            // The 14-day trend, sourced from the SAME banked series the Key Metrics graphs read — no new
+            // data path, no placeholder. Needs at least two points to draw a line; otherwise say so plainly.
+            if values.count > 1 {
+                Sparkline(values: values,
+                          gradient: Gradient(colors: [s.tint.opacity(0.55), s.tint]),
+                          showsHover: false,
+                          valueFormat: { s.decimals > 0 ? String(format: "%.\(s.decimals)f", $0) : String(Int($0.rounded())) })
+                    .frame(height: 46)
+                Text("Past 14 days").font(StrandFont.caption).foregroundStyle(StrandPalette.onDarkTertiary)
+            } else {
+                Text("Not enough history yet for a trend.")
+                    .font(StrandFont.caption).foregroundStyle(StrandPalette.onDarkTertiary)
+            }
+            // What the score means right now — reused real copy, never an invented claim. Charge uses the
+            // live readiness one-liner (the same text the Synthesis card shows); Effort/Rest use the scoring
+            // guide's own per-score headline. See `heroFocusRead`.
+            Text(heroFocusRead(s))
+                .font(StrandFont.footnote).foregroundStyle(StrandPalette.onDarkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button { guideSection = s.section } label: {
+                HStack(spacing: 3) {
+                    Text("See how it is scored").font(StrandFont.caption.weight(.semibold))
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).opacity(0.7)
+                }
+                .foregroundStyle(s.tint)
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The focused metric's 14-day values, oldest → newest, from the REAL banked `kSparks` series. Effort
+    /// is mapped onto the user's chosen Effort scale so a value read matches the number the ring shows.
+    private func heroFocusSpark(_ s: HeroScore) -> [Double] {
+        let raw = (kSparks[s.key] ?? []).map { $0.1 }
+        guard s.section == .effort else { return raw }
+        return raw.map { UnitFormatter.effortValue($0, scale: effortScale) }
+    }
+
+    /// An honest, data-grounded one-liner for the focused score. No fabricated claims: Charge reuses the
+    /// live readiness/calibration copy (identical to the Synthesis card), and Effort/Rest reuse the scoring
+    /// guide's own per-score explanation (Effort preferring the "no cardio load yet" note when it applies).
+    private func heroFocusRead(_ s: HeroScore) -> String {
+        switch s.section {
+        case .charge: return chargeDisplay.calibrationDetail ?? synthLine
+        case .effort: return effortZeroNote ?? s.section.headline
+        case .rest:   return s.section.headline
+        }
     }
 
     // MARK: - Heart rate
@@ -1516,48 +1675,89 @@ private struct LiquidWordmark: View {
 /// One of the three hero scores (Charge / Effort / Rest). The vessel fills from empty and the number
 /// COUNTS UP to the value when data lands; tapping the gauge itself splashes (the number is
 /// hit-transparent so the tap reaches the vessel). The label row taps through to the scoring guide.
+/// One ring cell in the Today hero's horizontal rail. Draws the score's `HearthProgressRing` with the
+/// number counting up over it and the label beneath — the same idiom as before, now a fixed-width cell
+/// that TAPS TO FOCUS (`onTap`) instead of opening the scoring guide inline (the guide moved to the
+/// focused detail's "See how it is scored" link). Focus tints the ring to the score's colour and lifts a
+/// soft highlight behind the cell so the selected ring reads clearly.
 private struct HeroScoreCell: View {
-    static let vesselDiameter: CGFloat = 96
+    /// The ring diameter (mockup's thin hero arc) and the cell's fixed rail width.
+    static let ringDiameter: CGFloat = 62
+    static let cellWidth: CGFloat = 76
 
     let label: String
     let score: Double?            // on whatever scale the caller passes (nil = no data yet)
     let tint: Color
     let animated: Bool
-    let onGuide: () -> Void
+    let focused: Bool
+    let onTap: () -> Void
     // The scale `score` is already expressed on — 100 for Charge/Rest, or the user's chosen Effort scale
-    // max (100 or 21, #45) — so the vessel fill matches the displayed number.
+    // max (100 or 21, #45) — so the ring fill matches the displayed number.
     var maxValue: Double = 100
     // Decimal places for the displayed number. 0 keeps the whole-number scores; the WHOOP 0–21 Effort
     // scale passes 1 to match the app-wide one-decimal `effortDisplay` convention (#45).
     var decimals: Int = 0
 
     var body: some View {
-        VStack(spacing: 7) {
-            LiquidScoreGauge(
-                score: score,
-                tint: tint,
-                diameter: Self.vesselDiameter,
-                animated: animated,
-                maxValue: maxValue,
-                decimals: decimals
-            )
-            Button(action: onGuide) {
-                HStack(spacing: 3) {
-                    // #74: one line, shrink-to-fit rather than wrap under large Dynamic Type (mirrors the
-                    // score number above) so CHARGE/EFFORT/REST never grow the hero card to two lines.
-                    Text(label.uppercased()).font(StrandFont.overline).tracking(1.6)
-                        .lineLimit(1).minimumScaleFactor(0.7)
-                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).opacity(0.6)
+        Button(action: onTap) {
+            VStack(spacing: 7) {
+                ZStack {
+                    // Default: white-on-dark ring (unchanged look). Focused: tint the fill to the score's
+                    // colour as a clear selection cue — a colour change only, not a fabricated value.
+                    HearthProgressRing(fraction: frac,
+                                       fillColor: focused ? tint : Color.white.opacity(0.92),
+                                       animated: animated)
+                        .frame(width: Self.ringDiameter, height: Self.ringDiameter)
+                    Group {
+                        if score != nil {
+                            CountUpNumber(value: shown, font: StrandFont.rounded(20), decimals: decimals)
+                        } else {
+                            Text("–").font(StrandFont.rounded(20))
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .allowsHitTesting(false)
                 }
-                // Theme-aware hero label (#1160): normal text token — readable on Dark and Light
-                // panel surfaces alike (was onDark* when the hero fill was pinned dark).
-                .foregroundStyle(StrandPalette.textSecondary)
+                HStack(spacing: 3) {
+                    // #74: one line, shrink-to-fit rather than wrap under large Dynamic Type so
+                    // CHARGE/EFFORT/REST never grow the hero card to two lines.
+                    Text(label.uppercased()).font(StrandFont.overlineScaled(10)).tracking(1.2)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                }
+                // The hero card fill is pinned dark in BOTH themes, so the label uses the scheme-invariant
+                // on-dark token (#1013); the focused label brightens to primary.
+                .foregroundStyle(focused ? StrandPalette.onDarkPrimary : StrandPalette.onDarkSecondary)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Text("\(label), \(score.map { decimals > 0 ? String(format: "%.\(decimals)f", $0) : String(Int($0.rounded())) } ?? String(localized: "no data yet")). See how it is scored."))
+            .frame(width: Self.cellWidth)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.white.opacity(focused ? 0.10 : 0))
+            )
+            .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity)
+        .buttonStyle(LiquidPressStyle())
+        .accessibilityLabel(Text("\(label), \(score.map { decimals > 0 ? String(format: "%.\(decimals)f", $0) : String(Int($0.rounded())) } ?? String(localized: "no data yet"))."))
+        .accessibilityHint(Text(focused ? "Tap to close the trend" : "Tap to show the 14-day trend"))
+        .accessibilityAddTraits(focused ? [.isSelected] : [])
+        .onAppear { rollTo(score) }
+        .onChangeCompat(of: score) { v in rollTo(v) }
     }
+
+    private func rollTo(_ v: Double?) {
+        guard let v else { shown = 0; return }
+        withAnimation(.easeOut(duration: 0.9)) { shown = v }   // counts up in step with the ring filling
+    }
+}
+
+/// Captures the hero rail's viewport width so the three-ring row can centre when it fits yet still scroll
+/// when it overflows (see `scoreRail`).
+private struct HeroRailWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 

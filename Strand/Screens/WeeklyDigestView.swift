@@ -92,7 +92,9 @@ struct WeeklyDigestView: View {
                        // is byte-identical layout. The content is kept in its inner VStack(sectionGap=22)
                        // for pixel-identical spacing (the scaffold stack is 20pt), so the win is partial
                        // until those rows are promoted to direct children.
-                       lazy: true) {
+                       lazy: true,
+                       // A weekly synthesis is a moment, not an archive browse — sky (mockup 5c).
+                       topBackground: liquidScaffoldSky()) {
             if repo.days.isEmpty {
                 ComingSoon(what: repo.loaded
                     ? "A weekly digest needs a few days of history. Wear your strap or import your WHOOP export in Data Sources."
@@ -288,28 +290,29 @@ struct WeeklyDigestContent: View {
         let signals = secondarySignals
         let hasFocal = !digest.focalPoints.isEmpty
         if hasFocal || !signals.isEmpty || !compact {
-            NoopCard {
-                VStack(alignment: .leading, spacing: 14) {
-                    if hasFocal {
-                        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 14) {
+                // Focal points ("what moved this week") and the nightly HRV/RHR signals are both
+                // genuinely list-shaped rows (icon/swatch → label → value), so both become
+                // `GroupCard`/`GroupRow` — the six-card vocabulary's divided-list workhorse — instead of
+                // an ad-hoc VStack+Divider (#vivid-shimmying-pancake task 3). One continuous divided list
+                // reads fine even mixing the two row shapes (the vocabulary's own preview does the same).
+                if hasFocal || !signals.isEmpty {
+                    GroupCard {
+                        if hasFocal {
                             ForEach(Array(digest.focalPoints.enumerated()), id: \.offset) { _, line in
                                 focalRow(line)
                             }
                         }
-                    }
-
-                    // Secondary nightly signals (HRV / RHR) as compact rows — full screen only.
-                    if !signals.isEmpty {
-                        if hasFocal { Divider().overlay(StrandPalette.hairline) }
-                        VStack(spacing: 10) {
+                        // Secondary nightly signals (HRV / RHR) as compact rows — full screen only.
+                        if !signals.isEmpty {
                             ForEach(signals, id: \.metric.rawValue) { row in
                                 metricRow(row)
                             }
                         }
                     }
-
-                    if !compact { footer }
                 }
+
+                if !compact { footer }
             }
         }
     }
@@ -324,41 +327,19 @@ struct WeeklyDigestContent: View {
     // MARK: Focal row
 
     private func focalRow(_ line: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "sparkles")
-                .font(StrandFont.footnote)
-                .foregroundStyle(StrandPalette.accent)
-                .accessibilityHidden(true)
-            Text(line)
-                .font(StrandFont.subhead)
-                .foregroundStyle(StrandPalette.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(line)
+        GroupRow(leading: .icon("sparkles", StrandPalette.accent), title: LocalizedStringKey(line))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(line)
     }
 
     // MARK: Metric row (secondary signals)
 
     private func metricRow(_ s: WeeklyMetricSummary) -> some View {
-        HStack(spacing: 12) {
-            // Domain dot + label so each signal reads as part of its colour world.
-            Circle().fill(domain(for: s.metric).color)
-                .frame(width: 7, height: 7)
-                .accessibilityHidden(true)
-            Text(s.metric.label)
-                .font(StrandFont.subhead)
-                .foregroundStyle(StrandPalette.textSecondary)
-                .frame(width: 84, alignment: .leading)
-
-            // This-week mean.
-            Text(meanText(s, effortScale: effortScale))
-                .font(StrandFont.bodyNumber)
-                .foregroundStyle(StrandPalette.textPrimary)
-                .frame(minWidth: 56, alignment: .leading)
-
-            Spacer(minLength: 8)
-
+        // Domain-tinted swatch + label so each signal still reads as part of its colour world —
+        // the same shape as `GroupRow`'s own "Skin temperature" / "Resting heart rate" preview.
+        GroupRow(leading: .swatch(domain(for: s.metric).color),
+                 title: LocalizedStringKey(s.metric.label),
+                 value: meanText(s, effortScale: effortScale)) {
             // Week-over-week delta chip (color-coded by good/bad, not just up/down).
             deltaChip(s)
         }
@@ -384,21 +365,26 @@ struct WeeklyDigestContent: View {
 
     // MARK: Footer (full screen only)
 
+    // Its own `NoopCard` (not folded into the `GroupCard` above) — the surface itself now
+    // separates it from the focal-points/secondary-signals list, so the old leading
+    // `Divider()` (needed only when footer was a bare VStack on the sky background) is
+    // gone; a divider inside its own card would just be clutter (#vivid-shimmying-pancake).
     private var footer: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Divider().overlay(StrandPalette.hairline)
-            if let sd = digest.sleepConsistencySD {
-                Text("Sleep steadiness: Rest varied ±\(fmt1(sd)) pts night to night.")
+        NoopCard {
+            VStack(alignment: .leading, spacing: 6) {
+                if let sd = digest.sleepConsistencySD {
+                    Text("Sleep steadiness: Rest varied ±\(fmt1(sd)) pts night to night.")
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                }
+                Text(digest.balance.sentence)
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Informational only, not medical advice.")
                     .font(StrandFont.footnote)
                     .foregroundStyle(StrandPalette.textTertiary)
             }
-            Text(digest.balance.sentence)
-                .font(StrandFont.footnote)
-                .foregroundStyle(StrandPalette.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("Informational only, not medical advice.")
-                .font(StrandFont.footnote)
-                .foregroundStyle(StrandPalette.textTertiary)
         }
     }
 

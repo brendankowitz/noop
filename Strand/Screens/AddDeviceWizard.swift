@@ -1502,11 +1502,13 @@ private struct WhoopPickList: View {
             if found.isEmpty {
                 SearchingCard(whoopHint: true)
             } else {
-                ForEach(found, id: \.uuid) { strap in
-                    DiscoveredRow(name: strap.name.isEmpty ? "WHOOP" : strap.name,
-                                  subtitle: "WHOOP",
-                                  rssi: strap.rssi) {
-                        onSelect(strap)
+                GroupCard {
+                    ForEach(found, id: \.uuid) { strap in
+                        DiscoveredRow(name: strap.name.isEmpty ? "WHOOP" : strap.name,
+                                      subtitle: "WHOOP",
+                                      rssi: strap.rssi) {
+                            onSelect(strap)
+                        }
                     }
                 }
             }
@@ -1527,11 +1529,13 @@ private struct HRPickList: View {
             if scanner.discovered.isEmpty {
                 SearchingCard()
             } else {
-                ForEach(scanner.discovered.sorted { $0.rssi > $1.rssi }) { strap in
-                    DiscoveredRow(name: strap.name,
-                                  subtitle: brandGuess(from: strap.name),
-                                  rssi: strap.rssi) {
-                        onSelect(strap)
+                GroupCard {
+                    ForEach(scanner.discovered.sorted { $0.rssi > $1.rssi }) { strap in
+                        DiscoveredRow(name: strap.name,
+                                      subtitle: brandGuess(from: strap.name),
+                                      rssi: strap.rssi) {
+                            onSelect(strap)
+                        }
                     }
                 }
             }
@@ -1556,11 +1560,13 @@ private struct FTMSPickList: View {
             if scanner.discovered.isEmpty {
                 SearchingCard()
             } else {
-                ForEach(scanner.discovered.sorted { $0.rssi > $1.rssi }) { machine in
-                    DiscoveredRow(name: machine.name,
-                                  subtitle: String(localized: "Gym equipment"),
-                                  rssi: machine.rssi) {
-                        onSelect(machine)
+                GroupCard {
+                    ForEach(scanner.discovered.sorted { $0.rssi > $1.rssi }) { machine in
+                        DiscoveredRow(name: machine.name,
+                                      subtitle: String(localized: "Gym equipment"),
+                                      rssi: machine.rssi) {
+                            onSelect(machine)
+                        }
                     }
                 }
             }
@@ -1581,9 +1587,11 @@ private struct HuamiPickList: View {
             if scanner.discovered.isEmpty {
                 SearchingCard()
             } else {
-                ForEach(scanner.discovered.sorted { $0.rssi > $1.rssi }) { dev in
-                    DiscoveredRow(name: dev.name, subtitle: String(localized: "Experimental"), rssi: dev.rssi) {
-                        onSelect(dev)
+                GroupCard {
+                    ForEach(scanner.discovered.sorted { $0.rssi > $1.rssi }) { dev in
+                        DiscoveredRow(name: dev.name, subtitle: String(localized: "Experimental"), rssi: dev.rssi) {
+                            onSelect(dev)
+                        }
                     }
                 }
             }
@@ -1638,11 +1646,13 @@ private struct OuraPickList: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else {
-                ForEach(scanner.discovered.sorted { $0.rssi > $1.rssi }) { ring in
-                    DiscoveredRow(name: ring.name,
-                                  subtitle: String(localized: "\(ring.detectedGen?.displayName ?? String(localized: "Oura ring")) · Beta"),
-                                  rssi: ring.rssi) {
-                        onSelect(ring)
+                GroupCard {
+                    ForEach(scanner.discovered.sorted { $0.rssi > $1.rssi }) { ring in
+                        DiscoveredRow(name: ring.name,
+                                      subtitle: String(localized: "\(ring.detectedGen?.displayName ?? String(localized: "Oura ring")) · Beta"),
+                                      rssi: ring.rssi) {
+                            onSelect(ring)
+                        }
                     }
                 }
             }
@@ -1697,6 +1707,11 @@ private struct SearchingCard: View {
     }
 }
 
+/// One discovered BLE device in a pick step. Was its own separately-carded row
+/// (`.frostedCardSurface`); now a `GroupRow` — the app's shared divided list-row anatomy — inside the
+/// pick list's `GroupCard`, with the RSSI `SignalBars` meter riding in `GroupRow`'s trailing accessory
+/// slot (it isn't an SF Symbol, so it can't use the `leading: .icon` case). Tap target and selection
+/// callback are unchanged — restyle only, no BLE/step-flow behavior touched.
 private struct DiscoveredRow: View {
     let name: String
     let subtitle: String
@@ -1704,24 +1719,9 @@ private struct DiscoveredRow: View {
     let onTap: () -> Void
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 12) {
+            GroupRow(title: LocalizedStringKey(name), subtitle: LocalizedStringKey(subtitle), showsChevron: true) {
                 SignalBars(rssi: rssi)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(name)
-                        .font(StrandFont.body)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                    Text(subtitle)
-                        .font(StrandFont.caption)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(StrandFont.caption)
-                    .foregroundStyle(StrandPalette.textTertiary)
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .frostedCardSurface(cornerRadius: 12)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(name), signal \(SignalBars.level(for: rssi)) of 4")

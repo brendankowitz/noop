@@ -11,7 +11,9 @@ struct NotificationSettingsView: View {
 
     var body: some View {
         ScreenScaffold(title: "Notifications",
-                       subtitle: "Buzz your strap when these apps notify you. Everything runs on \(Platform.deviceNounPhrase).") {
+                       subtitle: "Buzz your strap when these apps notify you. Everything runs on \(Platform.deviceNounPhrase).",
+                       // Matches its sibling Settings — sky.
+                       topBackground: liquidScaffoldSky()) {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
                 masterCard
                     .staggeredAppear(index: 0)

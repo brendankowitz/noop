@@ -81,7 +81,9 @@ struct FusedRecordView: View {
     var body: some View {
         ScreenScaffold(
             title: "Your Data, Fused",
-            subtitle: subtitle
+            subtitle: subtitle,
+            // Archive/reference, not a lived moment — flat ink, matching Trends/Health.
+            topBackground: liquidFlatInkBackground()
         ) {
             VStack(alignment: .leading, spacing: NoopMetrics.gap) {
                 if isMultiSource { dayBadgeRow }
@@ -322,7 +324,9 @@ private struct ConflictCompareSheet: View {
     private var point: FusedMetricPoint { row.point }
 
     var body: some View {
-        ScreenScaffold(title: LocalizedStringKey(row.label), subtitle: "Your bands report different numbers. Here's every source, and the one NOOP is using.") {
+        ScreenScaffold(title: LocalizedStringKey(row.label), subtitle: "Your bands report different numbers. Here's every source, and the one NOOP is using.",
+                       // Archive/reference, not a lived moment — flat ink, matching Trends/Health.
+                       topBackground: liquidFlatInkBackground()) {
             VStack(alignment: .leading, spacing: NoopMetrics.gap) {
                 NoopCard {
                     VStack(spacing: 0) {

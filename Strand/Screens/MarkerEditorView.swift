@@ -52,7 +52,9 @@ struct MarkerEditorView: View {
 
     var body: some View {
         ScreenScaffold(title: "Add a reading",
-                       subtitle: "Type in a number from your own report. It stays on \(Platform.deviceNounPhrase).") {
+                       subtitle: "Type in a number from your own report. It stays on \(Platform.deviceNounPhrase).",
+                       // A labs/marker entry screen — flat ink, matching Health.
+                       topBackground: liquidFlatInkBackground()) {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                 markerSection
                 if selection != nil || addingCustom {

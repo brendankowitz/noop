@@ -139,24 +139,6 @@ struct BackupSyncView: View {
                 }
                 Text(lastMs > 0 ? "Last backup: \(relativeTime(lastMs))" : "No backup yet.")
                     .font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
-                // Auto is ON but the last SUCCESSFUL backup is stale — the on-launch catch-up isn't landing
-                // (a moved/disconnected cloud folder stops backups silently, or NOOP hasn't been opened).
-                // Surface it so a silently-failing auto-backup is visible, not discovered only at restore.
-                // `lastMs > 0` excludes the never-backed-up state (the "No backup yet." line above owns that,
-                // and it would otherwise false-fire the moment auto is switched on, before the first backup).
-                if auto, folderLabel != nil, lastMs > 0,
-                   BackupSync.isBackupStale(lastBackupMs: lastMs,
-                                            nowMs: Int(Date().timeIntervalSince1970 * 1000.0)) {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(StrandPalette.statusWarning)
-                            .font(.system(size: 12))
-                            .accessibilityHidden(true)
-                        Text("Auto-backup hasn't run in a few days. Check the backup folder is still available — a moved or disconnected cloud folder stops backups silently.")
-                            .font(StrandFont.caption).foregroundStyle(StrandPalette.statusWarning)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
                 NoopButton(busy ? "Working…" : "Back up now",
                            systemImage: "icloud.and.arrow.up", kind: .primary, fullWidth: true) { backupNow() }
                     .disabled(folderLabel == nil || busy)
@@ -291,34 +273,35 @@ struct BackupSyncView: View {
 
 /// The snapshot chooser shown before a restore (must-fix #1: pick from the folder, newest first).
 /// Reports the chosen snapshot (or nil if dismissed) back to the host, which then arms the destructive
-/// confirmation.
+/// confirmation. No reorder/swipe interaction here (this is a plain tap-to-choose list), so the old raw
+/// `List` is replaced outright by a `GroupCard` of `GroupRow`s in a `ScrollView` — the same divided
+/// list-row look as the rest of the app instead of system List chrome.
 private struct RestorePickerSheet: View {
     let snapshots: [FolderBackup.Snapshot]
     let onChoose: (FolderBackup.Snapshot?) -> Void
 
     var body: some View {
         NavigationStack {
-            List(snapshots) { snap in
-                Button { onChoose(snap) } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            // A hand-named file whose date lookup failed has timeMs 0; show its name as the
-                            // primary line rather than "1 Jan 1970". The filename subtitle then only repeats
-                            // when we DO have a real date to head the row.
-                            Text(primaryLabel(snap))
-                                .font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
-                            if snap.timeMs > 0 {
-                                Text(snap.name)
-                                    .font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
-                            }
+            ScrollView {
+                GroupCard {
+                    ForEach(snapshots) { snap in
+                        Button { onChoose(snap) } label: {
+                            // A hand-named file whose date lookup failed has timeMs 0; show its name as
+                            // the primary line rather than "1 Jan 1970". The filename subtitle then only
+                            // repeats when we DO have a real date to head the row.
+                            GroupRow(
+                                title: LocalizedStringKey(primaryLabel(snap)),
+                                subtitle: snap.timeMs > 0 ? LocalizedStringKey(snap.name) : nil,
+                                showsChevron: true
+                            )
                         }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(accessibilityLabel(snap))
                     }
                 }
-                .accessibilityLabel(accessibilityLabel(snap))
+                .padding(20)
             }
+            .background(StrandPalette.surfaceBase)
             .navigationTitle("Choose a backup")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -332,7 +315,8 @@ private struct RestorePickerSheet: View {
         // with backups that ARE in the folder (the caller only opens this sheet when the list is
         // non-empty). Give it a real size, the same way `AddDeviceWizard`/`HealthView` frame their macOS
         // sheets with a fixed size. iOS/iPadOS sheets already take a sensible height, so the frame is
-        // macOS-only. A longer backup list scrolls within the List; a short one leaves trailing space. (#1093)
+        // macOS-only. A longer backup list scrolls within the ScrollView; a short one leaves trailing
+        // space. (#1093)
         #if os(macOS)
         .frame(width: 460, height: 420)
         #endif
