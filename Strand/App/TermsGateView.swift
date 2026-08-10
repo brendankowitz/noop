@@ -26,6 +26,7 @@ struct TermsGateView: View {
                         .foregroundStyle(StrandPalette.textSecondary)
                         .multilineTextAlignment(.center)
                 }
+                .padding(.horizontal, 30)
                 .padding(.top, 36)
                 .padding(.bottom, 22)
 
