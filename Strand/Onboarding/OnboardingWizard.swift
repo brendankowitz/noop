@@ -723,6 +723,10 @@ private struct ScanStep: View {
                 SheetFootnote(text: String(localized: "No WHOOP? You can still continue. Pair a heart-rate strap (Polar, Wahoo, Coospo, Garmin HRM…) or a gym machine under Devices, or import from WHOOP, Apple Health, Oura, Fitbit, Garmin and more under Data Sources. You can do either any time."))
             }
         }
+        // Auto-start: the prior Bluetooth step already told the user "so NOOP can find your strap",
+        // so this step should already be searching when it appears rather than sitting on a dead,
+        // unpulsing radar until they notice and tap Scan themselves.
+        .onAppear { if !live.bonded { startScan() } }
         .onDisappear { scanning = false }
     }
 
