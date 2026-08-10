@@ -74,6 +74,9 @@ public enum NoopMetrics {
     /// Minimum desktop size for a navigation-based customization sheet.
     public static let editorSheetMinWidth: CGFloat = 440
     public static let editorSheetMinHeight: CGFloat = 600
+    /// Minimum desktop size for a detail/record sheet (e.g. a cycle history record editor).
+    public static let detailSheetMinWidth: CGFloat = 520
+    public static let detailSheetMinHeight: CGFloat = 620
 }
 
 // MARK: - Screen padding
