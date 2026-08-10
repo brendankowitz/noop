@@ -1911,7 +1911,7 @@ private struct LiquidWordmark: View {
             ForEach(Array("NOOP".enumerated()), id: \.offset) { _, ch in
                 Text(String(ch))
                     .font(StrandFont.rounded(16, weight: .bold))
-                    .foregroundStyle(StrandPalette.textTertiary)
+                    .foregroundStyle(.white.opacity(0.5))
             }
         }
         .shadow(color: .black.opacity(0.25), radius: 6, y: 1)
@@ -2418,7 +2418,7 @@ private struct LiquidStatusPill: View {
             .frame(height: 34)
             .background(Capsule().fill(.white.opacity(0.16)))
         }
-        .nativeLiquidGlassHeaderButton()
+        .buttonStyle(LiquidPressStyle())
         .accessibilityLabel(batteryAccessibility)
     }
     /// Never "Strap battery" alone for a no-reading state — that was indistinguishable from a real one.
@@ -2435,29 +2435,6 @@ private struct LiquidStatusPill: View {
             return charging
                 ? String(localized: "Strap battery \(n) percent, charging")
                 : String(localized: "Strap battery \(n) percent")
-        }
-    }
-}
-
-private extension View {
-    /// The edge-to-edge photo is overlaid after the native button style so it can fill the face. Finish
-    /// the composed control with interactive system glass as the topmost visual layer; otherwise the
-    /// opaque photo would conceal the button style's refraction and highlight. macOS keeps the photo
-    /// as-is (Liquid Glass is iOS-only).
-    @ViewBuilder
-    func nativeLiquidGlassPhotoFinish() -> some View {
-        self.nativeLiquidGlassCircleFinish()
-    }
-
-    /// Platform-owned Home-header button chrome. iOS 26 supplies the interactive Liquid Glass button
-    /// material; macOS and older iOS keep the same circular geometry with a native system material.
-    @ViewBuilder
-    func nativeLiquidGlassHeaderButton() -> some View {
-        self.nativeLiquidGlassButtonChrome(controlSize: .small) {
-            self
-                .buttonStyle(LiquidPressStyle())
-                .background(.ultraThinMaterial, in: Circle())
-                .overlay(Circle().strokeBorder(.white.opacity(0.16), lineWidth: 0.8))
         }
     }
 }
