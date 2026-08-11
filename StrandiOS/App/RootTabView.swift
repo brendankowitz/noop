@@ -625,15 +625,16 @@ private struct FloatingTabBar: View {
         }
         .padding(.vertical, 10) // mockup's chunkier 14px rhythm (10 here + 3 inside each tab)
         .padding(.horizontal, 8)
-        // The bar is a DARK frosted pill in both themes, so its text/icons use the onDark tokens
-        // unconditionally (see tabButton below) — but real iOS 26 Liquid Glass (`.glassEffect`) samples
-        // the actual screen content behind it live, at the compositor level. A plain sibling
-        // `.background(inkColor)` sits behind the ALREADY-composited glass in SwiftUI's own view tree,
-        // not behind it in the real rendered scene, so it never reaches the glass's live sample —
-        // it visibly flickered light/dark as different screens (or a scroll position) changed what was
-        // really underneath during a tab switch. Tinting the glass itself (`.tint(inkColor)`) is the
-        // API the system actually respects for pinning a glass element's read regardless of backdrop.
-        .liquidGlass(in: Capsule(), tint: Color(.sRGB, red: 0x1B / 255, green: 0x1A / 255, blue: 0x14 / 255, opacity: 0.82))
+        // The bar is a DARK pill in both themes, so its text/icons use the onDark tokens
+        // unconditionally (see tabButton below). This used to be a translucent/blur material (first
+        // `.glassEffect` on iOS 26, then a tinted `.glassEffect`) so it could read as "frosted glass" —
+        // but real Liquid Glass keeps sampling the actual screen behind it live at the compositor
+        // level regardless of any local SwiftUI tint or background, so the bar visibly flickered
+        // between light and dark as different screens (or scroll positions) changed what was really
+        // underneath during a tab switch, on real hardware, even after tinting the glass. A flat opaque
+        // fill can't sample anything — it reads identically no matter what's behind it — so that's what
+        // pins the bar's colour for good, at the cost of the glass shimmer.
+        .background(Color(.sRGB, red: 0x1B / 255, green: 0x1A / 255, blue: 0x14 / 255, opacity: 1), in: Capsule())
         // Soft top-lit rim instead of one hard hairline, so there's no crisp cut-out edge.
         .overlay(
             Capsule().strokeBorder(
@@ -695,29 +696,5 @@ private struct FloatingTabBar: View {
         .accessibilityAddTraits(active ? [.isButton, .isSelected] : .isButton)
     }
 
-}
-
-// MARK: - Liquid Glass (iOS 26) with a Material fallback
-
-private extension View {
-    /// Real iOS 26 Liquid Glass where available; `.ultraThinMaterial` on iOS 17–25 — a clean
-    /// blended degrade so the bar stays modern on new OSes without breaking older ones. `tint`, when
-    /// given, pins the glass's read regardless of what's really behind it: on iOS 26 via the glass
-    /// material's own `.tint(_:)` (the API the live compositor actually honours — a plain sibling
-    /// `.background()` does not reach a real `.glassEffect`'s live backdrop sample), and on the
-    /// `.ultraThinMaterial` fallback via an ordinary background, which is a real local composite there.
-    @ViewBuilder func liquidGlass(in shape: some Shape, tint: Color? = nil) -> some View {
-        if #available(iOS 26.0, *) {
-            if let tint {
-                self.glassEffect(.regular.tint(tint), in: shape)
-            } else {
-                self.glassEffect(.regular, in: shape)
-            }
-        } else if let tint {
-            self.background(.ultraThinMaterial, in: shape).background(tint, in: shape)
-        } else {
-            self.background(.ultraThinMaterial, in: shape)
-        }
-    }
 }
 #endif

@@ -864,11 +864,7 @@ struct MetricDetailView: View {
                 }
             }
         .padding(NoopMetrics.cardPadding)
-        .background {
-            NoopPanelSurface(tint: domain.color,
-                             cornerRadius: NoopMetrics.cardRadius,
-                             elevated: true)
-        }
+        .frostedCardSurface(tint: domain.color, cornerRadius: NoopMetrics.cardRadius)
         // The hero shows the LATEST available point (range-independent), so the vessel fills once on
         // appear (0 → its fraction) and settles — like TodayView's rings.
         .onAppear {

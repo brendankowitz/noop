@@ -2119,8 +2119,7 @@ private struct LiquidFullWidthNavigationAction: View {
         .frame(height: NoopButtonMetrics.height)
         .frame(minHeight: NoopButtonMetrics.minHitTarget)
         .contentShape(Rectangle())
-        .background(NoopPanelSurface(cornerRadius: NoopButtonMetrics.cornerRadius))
-        .clipShape(RoundedRectangle(cornerRadius: NoopButtonMetrics.cornerRadius, style: .continuous))
+        .frostedCardSurface(cornerRadius: NoopButtonMetrics.cornerRadius)
     }
 }
 
